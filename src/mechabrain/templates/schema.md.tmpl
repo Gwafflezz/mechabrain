@@ -1,0 +1,88 @@
+# Schema de frontmatter — Mecha-Brain
+
+> [!warning] Arquivo gerado
+> Este arquivo é **gerado** a partir de `mecha-brain/_meta/config.yaml` (R6.4) por `mechabrain init` / `mechabrain sync`. Edições à mão são perdidas na próxima regeneração — mude o manifest.
+> Ele é a versão legível por humanos e agentes das regras do §6, sempre consistente com o config: documentação de schema mantida à mão diverge do config com o tempo.
+
+## Toda nota escrita pelo kernel
+
+```yaml
+---
+title: "..."
+tags: [$tags_example]
+created: YYYY-MM-DD
+modified: YYYY-MM-DD
+agent: <id do registry>        # quem escreveu (runtime)
+profile: <persona>             # opcional — perfil do runtime autor (R6.6)
+scope: <slug | global>         # projeto ao qual a memória pertence (R6.5)
+source: "<sessão/execução/ponte de origem>"  # rastreabilidade (P7)
+confidence: $confidence_values
+last_accessed: YYYY-MM-DD      # atualizado pelo consolidador (R7.3)
+supersedes: "[[...]]"          # opcional — memória que esta substitui
+status: $status_values   # deprecado só para procedural
+---
+```
+
+## Campos
+
+| Campo | Obrigatório | Valores | Regra |
+|---|---|---|---|
+| `title` | sim | texto livre | — |
+| `tags` | sim | ver *Tags*, abaixo | R6.1 |
+| `created` | sim | `YYYY-MM-DD` | — |
+| `modified` | sim | `YYYY-MM-DD` | — |
+| `agent` | sim | $agent_ids_inline | R6.2 — autor fora do registry é recusado |
+| `profile` | não | ver *Registry*, abaixo | R6.6 — deve constar nos `profiles` do agente autor |
+| `scope` | sim | $scopes_inline | R6.5 — `$scope_default` na ausência de projeto |
+| `source` | sim | texto livre | P7 / §8.2 item 4 |
+| `confidence` | sim | $confidence_values | `high` só com verificação ou fonte primária |
+| `last_accessed` | não | `YYYY-MM-DD` | escrito pelo consolidador, não pelo agente (R7.3) |
+| `supersedes` | não | `"[[wikilink]]"` | a memória que esta substitui |
+| `status` | sim | $status_values | `deprecado` só para `procedural` (§9.4) |
+
+## Tags
+
+Namespaces deste deployment (`frontmatter.tag_namespaces`):
+
+| Namespace | Gera | Exemplo |
+|---|---|---|
+| `$memory_ns` | uma tag por tipo de memória | $memory_tags_inline |
+| `$agent_ns` | uma tag por agente do registry | $agent_tags_inline |
+
+Tags extras exigidas em toda nota de agente (`frontmatter.required_extra_tags`): $required_extra_tags_inline
+
+## Denylists (R6.1)
+
+`memory_write` **rejeita** a nota que carregue qualquer item abaixo, citando a regra do manifest violada.
+
+- Chaves proibidas (`frontmatter.denylist_keys`): $denylist_keys_inline
+- Tags proibidas (`frontmatter.denylist_tags`): $denylist_tags_inline
+
+## Registry de agentes (`agents:`)
+
+Identidade em dois níveis (R6.6): `agent` é o **runtime** — quem executa, qual zona de escrita, quem responde pela memória; é a única fronteira que o kernel consegue impor. `profile` é a **persona** — proveniência e filtro de busca, nunca fronteira de escrita. Por isso `Episodic/` é por agente, jamais por perfil.
+
+$agents_table
+
+## Escopos (`scopes:`)
+
+$scopes_paragraph
+
+`scope:` existe para impedir **contaminação cruzada**: um fato verdadeiro no projeto A não pode ser recuperado como verdade no projeto B sem sinalização (R6.5). Consequências mecânicas: dedup e fusão só acontecem **dentro** do mesmo escopo; pares cross-scope similares são apenas relatados para revisão humana (§9.2).
+
+## Nomes de arquivo (`naming:`)
+
+- Notas: `$note_name`
+- Propostas: `$proposal_name`
+- Tipos datados (`{date}` no nome): $dated_types_inline
+
+| Tipo | Pasta | Prefixo |
+|---|---|---|
+$naming_rows
+
+## Imutabilidade e ciclo de vida
+
+- **R6.3** Notas em `Episodic/` nunca são editadas depois de criadas (append-only). Correção = nota nova com `supersedes`.
+- **§9.3** Sem acesso há `$decay_days` dias → `status: arquivado`. Nunca deletar (P8): arquivadas saem do `index.md` e perdem peso no retrieval, mas continuam buscáveis com filtro explícito.
+- **§9.4** `PROC` contradito por execução mais recente ou substituído → `status: deprecado`, com link para o sucessor.
+- **§9.2** Similaridade acima de `$dedup_similarity` no mesmo escopo → candidato a fusão. A fusão **preserva detalhe** (nunca super-resume) e é decisão de agente, não do kernel: o consolidador apenas detecta e relata os candidatos.

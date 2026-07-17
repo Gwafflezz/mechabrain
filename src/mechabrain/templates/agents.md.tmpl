@@ -1,0 +1,119 @@
+$begin_marker
+# AGENTS.md — contrato do Mecha-Brain
+
+> [!warning] Bloco gerenciado — não edite aqui dentro
+> Tudo entre os marcadores `mechabrain:begin` e `mechabrain:end` (os comentários HTML que abrem e fecham esta seção) é **gerado** a partir de `mecha-brain/_meta/config.yaml` por `mechabrain init` / `mechabrain sync`. O que você escrever aqui dentro some na próxima regeneração — mude o manifest.
+> **Fora do bloco o arquivo é seu**: seções livres antes ou depois dos marcadores sobrevivem ao `sync`. O bloco existe para eliminar o drift doc-vs-config — fronteira documentada à mão diverge do config com o tempo.
+> Não repita os marcadores em outro ponto do arquivo: com dois pares o kernel não sabe qual bloco é dele e recusa o `sync` em vez de arriscar apagar o que você escreveu.
+
+## 1. Fronteiras (P4)
+
+**Sandbox por default.** A regra é uma só:
+
+- **Escrita livre**: apenas dentro de `mecha-brain/`, e sempre via MCP — nunca escrevendo arquivo direto.
+- **Read-only**: o resto da vault. Você lê e cita; para mudar qualquer coisa fora do sandbox, use `memory_propose` — é a **única** via.
+- **Nunca**: config, segredo ou estado de máquina não entram na vault.
+
+| Superfície | Quem escreve | Você faz |
+|---|---|---|
+| `mecha-brain/Semantic/` | agentes, via `memory_write` (gate completo) | escreve |
+| `mecha-brain/Episodic/<seu-id>/` | só o próprio agente, append-only (R6.3) | escreve |
+| `mecha-brain/Procedural/` | agentes, via `memory_write` (gate completo) | escreve |
+| `mecha-brain/Research/` | agentes, via `memory_write` | $research_cell |
+| `$proposals_dir` | agentes, via `memory_propose` | propõe |
+| `mecha-brain/hot.md`, `index.md`, `indices/` | **só o consolidador** (R8.1) | lê |
+| `mecha-brain/_meta/` | o kernel | lê |
+| resto da vault | humanos | lê e cita; propõe |
+
+Pastas humanas indexadas como contexto read-only (`zones.read_only_index`): $read_only_index_inline
+
+## 2. Ferramentas MCP
+
+O nome conceitual da spec é `memory.search`; o charset de nome de tool do MCP não aceita ponto, então o nome exposto usa underscore. O mapeamento é direto:
+
+| Spec | Ferramenta | O que faz |
+|---|---|---|
+| `memory.search` | `memory_search(query, k=8, filters?, expand_links?)` | busca híbrida (vetorial + BM25, pesos do manifest) com Contextual Retrieval |
+| `memory.get` | `memory_get(id \| wikilink)` | nota completa (frontmatter + corpo) |
+| `memory.status` | `memory_status()` | saúde do índice, contagens por tipo, data da última consolidação |
+| `memory.write` | `memory_write(type, content, meta)` | roda o gate (§4 abaixo) e grava |
+| `memory.propose` | `memory_propose(target_path, proposed_change, rationale)` | proposta de mudança fora do sandbox |
+| `memory.link` | `memory_link(a, b, relation?)` | registra aresta autorada entre notas |
+
+Filtros de `memory_search`: `{type, agent, profile, scope, tags, status, min_confidence}`.
+
+**Todo hit carrega `path` e `wikilink` (R7.1). Cite a fonte na sua resposta** — memória sem proveniência não é auditável (P7).
+
+### Filtre por escopo (recomendação normativa)
+
+Filtre `memory_search` pelo **escopo do trabalho corrente**. Um hit de outro escopo é **contexto, não verdade local** — se for usar, diga de onde veio. Escopos deste deployment: $scopes_inline (default: `$scope_default`).
+
+### Expansão por links
+
+`expand_links: N` expande os top-k seeds por N saltos no **grafo autorado** (wikilinks do corpo + `supersedes` + arestas de `memory_link`), rerankeia e devolve a cadeia de proveniência (`via: [[seed]] → [[intermediária]]`). Neste deployment: default `$default_hops`, teto `$max_hops` (`0` desliga).
+
+O grafo é o que humanos e agentes escreveram — nunca extraído por LLM. **Quanto melhor você linkar, melhor o recall multi-hop de todo mundo**: use `memory_link` quando notar uma relação que os wikilinks não expressam.
+
+## 3. Roteamento — "para onde vai isto?" (§8.1)
+
+Árvore de decisão. **Pare na primeira regra que casar.**
+
+1. É config/segredo/estado de máquina? → **camada runtime**. Nunca entra na vault.
+2. É comportamento ou modelo-do-usuário de um agente específico? → **store privado do agente**, se existir. Não é candidato ao Mecha-Brain.
+3. É evento/registro do que aconteceu numa sessão? → **`Episodic/<seu-id>/`** — `memory_write(type="episodic")`. Escrita direta, sem gate: é diário, não verdade.
+4. É procedimento/how-to **testado** e reutilizável? → **`Procedural/`** — `memory_write(type="procedural")`. Gate completo.
+5. É relatório longo de pesquisa? → **`Research/`** — `memory_write(type="research")`. $research_routing
+6. É fato/insight reutilizável e citável? → **`Semantic/`** — `memory_write(type="semantic")`. Gate completo.
+7. Requer mudar nota humana / algo fora do sandbox? → **`memory_propose`**. Nunca escrita direta.
+8. Nada acima? → **não escreve.** Fica no contexto da sessão.
+
+Em qualquer escrita (passos 3–6) declare **`scope:`**. Na dúvida entre projeto e global, **prefira o projeto**: promover a global é decisão de consolidação, não de escrita.
+
+## 4. Gate de escrita (§8.2) — `Semantic/` e `Procedural/`
+
+Antes de chamar `memory_write`, responda os sete itens. Metade deles o kernel verifica e **rejeita** sozinho; a outra metade é **julgamento seu** — o kernel não tem LLM e não vai fingir que policia o que não consegue medir. Os itens de julgamento voltam como *warning*, não como rejeição: eles são responsabilidade sua.
+
+| # | Item | Quem garante |
+|---|---|---|
+| 1 | **Reutilizável?** Vale além da sessão atual? Se não → não escreva. | **você** (warning) |
+| 2 | **Já existe?** `memory_search` antes de escrever é obrigatório. Similaridade acima de `$dedup_similarity` **no mesmo escopo** → decida explicitamente: `supersedes`, fusão, ou desista. | kernel — **rejeita** |
+| 3 | **Atômico?** Um insight por nota (Zettelkasten). Vários → divida em notas. | **você** (warning) |
+| 4 | **Fonte declarada?** `source:` preenchido; `confidence: high` só com verificação ou fonte primária. | kernel — **rejeita** se vazio |
+| 5 | **Escopado?** `scope:` declarado e correto. Fato de projeto gravado como `global` é contaminação cruzada em potencial (R6.5). | kernel — **rejeita** escopo inválido (o *correto* é você) |
+| 6 | **Procedural: testado?** `PROC` exige o procedimento executado com sucesso ao menos uma vez, com a evidência citada no corpo. | kernel — **rejeita** sem `meta.evidence` |
+| 7 | **Limpo?** Sem chaves/tags das denylists (R6.1). | kernel — **rejeita** |
+
+Escrita cega de quase-duplicata é rejeitada. Escrever em memória procedural é a forma mais arriscada de learning: **um playbook ruim propaga erro para todos os agentes** — daí o item 6 ser mecânico.
+
+### Item 6 na prática
+
+`memory_write(type="procedural")` exige `meta.evidence` não-vazio. O kernel renderiza esse texto no corpo da nota, sob uma seção de evidência — é assim que "a evidência citada no corpo" vira mecanicamente verificável. Cite a execução real: o que rodou, quando, com que resultado.
+
+## 5. Registry de agentes (`agents:`)
+
+`agent` = **runtime** (quem executa, zona de escrita, accountability) — a única fronteira que o kernel impõe. `profile` = **persona** (proveniência e filtro). Perfis do mesmo runtime compartilham processo e credenciais, então `Episodic/` é por agente, nunca por perfil (R6.6).
+
+$agents_table
+
+Escreva como o `agent` que você é. Autor fora deste registry é recusado (R6.2).
+
+## 6. Frontmatter
+
+Schema completo e sempre atualizado: `mecha-brain/_meta/schema.md` (gerado do mesmo manifest que este bloco).
+
+- Tags automáticas: `$memory_ns/<tipo>` e `$agent_ns/<seu-id>`.
+- Tags extras exigidas neste deployment: $required_extra_tags_inline
+- **Chaves proibidas** (`denylist_keys`): $denylist_keys_inline
+- **Tags proibidas** (`denylist_tags`): $denylist_tags_inline
+- Nome de nota: `$note_name` · proposta: `$proposal_name`
+
+As denylists existem porque a vault hospedeira tem automações e plugins próprios: uma tag ou chave errada numa nota sua dispara comportamento humano que ninguém pediu.
+
+## 7. Manutenção (você não roda; você aproveita)
+
+`mechabrain consolidate` (§9) faz o mecânico: agrega acessos → `last_accessed`, arquiva o que não é lido há `$decay_days` dias (`status: arquivado` — **nunca deleta**, P8), deprecia `PROC` com sucessor, reconstrói o índice, regenera `hot.md`/`index.md`/`indices/` e commita com `$commit_prefix`.
+
+O que ele **não** faz: fundir duplicatas. Fusão exige julgamento e o kernel não tem LLM — ele detecta e **relata** os candidatos (mesmo escopo, acima do limiar) e a fusão é feita por um agente via `memory_write` com `supersedes`, preservando detalhe (§9.2). Pares cross-scope similares vão para uma lista separada do relatório e **nunca** são fundidos.
+
+Leia `mecha-brain/hot.md` para o foco atual (blackboard compartilhado, por escopo) e `mecha-brain/index.md` para o mapa das memórias ativas. Ambos são gerados: aponte-se por eles, não escreva neles.
+$end_marker

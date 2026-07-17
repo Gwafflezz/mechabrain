@@ -1,0 +1,116 @@
+# ══════════════════════════════════════════════════════════════════
+# Mecha-Brain — manifest do deployment (spec §5)
+#
+# Esta é a ÚNICA casa de tudo que é específico desta vault: agentes,
+# escopos, nomes de arquivo, fronteiras, denylists, pesos de busca.
+# O kernel não conhece nada disto por código (P6/R4.1): portar o
+# sistema para outra vault é editar este arquivo — nunca o código.
+#
+# Duas regras que o kernel impõe na leitura deste arquivo:
+#   • Todo path é RELATIVO à raiz da vault (o diretório pai de
+#     mecha-brain/). Caminho absoluto aqui é erro (R4.2).
+#   • Chave desconhecida ou valor inválido faz o kernel falhar no
+#     boot citando a chave. Não existe default silencioso para uma
+#     chave com typo (R5.1).
+#
+# Depois de editar: rode `mechabrain sync` para regenerar os
+# artefatos derivados (AGENTS.md, _meta/schema.md, subpastas de
+# Episodic/ dos agentes novos).
+# ══════════════════════════════════════════════════════════════════
+
+mecha_brain:
+  spec_version: "$spec_version"        # versão deste contrato
+  kernel_min_version: "$kernel_min_version"      # kernel mais antigo que serve este deployment (R4.5)
+
+# ── Agentes ───────────────────────────────────────────────────────
+# O kernel NÃO conhece agentes por nome. Este registry gera:
+# subpastas de Episodic/, valores válidos de `agent:` e tags $agent_ns/<id>.
+#
+# Identidade em dois níveis (R6.6):
+#   `id`       = RUNTIME — quem executa, qual zona de escrita, quem
+#                responde pela memória. É a única fronteira que o
+#                kernel consegue IMPOR.
+#   `profiles` = personas do mesmo runtime — proveniência e filtro de
+#                busca, jamais fronteira de escrita (perfis do mesmo
+#                runtime compartilham processo e credenciais).
+# Por isso Episodic/ é por agente, nunca por perfil.
+agents:
+  - id: exemplo                # slug curto, minúsculo — o RUNTIME (quem executa)
+    display_name: "Exemplo"
+    profiles: []               # personas deste runtime (ex.: [tutor, orquestrador])
+    private_store: none        # descrição de memória privada externa, se houver
+                               # (informativo — o kernel não a gerencia; ver §8.3;
+                               #  com perfis, pode ser declarado por perfil:
+                               #  private_store: {tutor: "descrição"})
+
+# ── Escopos (projetos) ────────────────────────────────────────────
+# Toda memória carrega `scope:` — slug de projeto ou "global" (R6.5).
+# Escopo existe para impedir CONTAMINAÇÃO CRUZADA: um fato verdadeiro
+# no projeto A não pode ser recuperado como verdade no projeto B sem
+# sinalização. Fusão de duplicatas nunca atravessa escopos (§9.2).
+scopes:
+  known: []                    # slugs válidos (vazio = qualquer slug aceito)
+  default: global
+
+# ── Nomenclatura ──────────────────────────────────────────────────
+naming:
+  note_name: "{date}_{prefix}_{slug}.md"       # template; {date} = YYYY-MM-DD
+  dated_types: [episodic, semantic, research]  # procedural é atemporal
+  prefixes:
+    episodic: MEM
+    semantic: INS
+    procedural: PROC
+    research: RES
+  proposal_name: "{date}_AI-PROPOSAL_{slug}.md"
+
+# ── Zonas e fronteiras (paths relativos à raiz da vault) ───────────
+zones:
+  proposals_dir: "mecha-brain/_inbox/"   # pode apontar p/ o inbox nativo da vault
+  read_only_index: []                    # pastas humanas indexadas como contexto
+                                         # read-only — o agente lê e cita, nunca
+                                         # escreve; para mudá-las use memory_propose
+    # - "PastaHumana/"
+  research_enabled: true                 # habilita Research/ e memory_write(type=research)
+
+# ── Frontmatter e tags ────────────────────────────────────────────
+frontmatter:
+  denylist_keys: []            # chaves PROIBIDAS em notas de agente
+                               # (ex.: chaves de plugin de publicação da vault)
+  denylist_tags: []            # tags proibidas (ex.: tags que disparam
+                               # automações humanas). Escreva sem o '#'.
+  tag_namespaces:
+    memory: "$memory_ns"              # gera $memory_ns/{episodic,semantic,procedural,research}
+    agent: "$agent_ns"                # gera $agent_ns/<id>
+  required_extra_tags: []      # tags que este deployment exige em toda nota de agente
+
+# ── Retrieval ─────────────────────────────────────────────────────
+retrieval:
+  embedding:
+    provider: sentence-transformers   # sentence-transformers | http | hash
+                                      # http = endpoint compatível (retrieval local sem
+                                      # modelo na máquina); hash = determinístico e
+                                      # offline, SÓ para teste/CI — não carrega semântica.
+    model: "BAAI/bge-m3"              # default multilíngue
+  hybrid:                             # os pesos devem somar 1.0: cada lista (vetorial
+    vector_weight: 0.6                # e BM25) é normalizada min-max e combinada por
+    bm25_weight: 0.4                  # estes pesos.
+  contextual_retrieval: true   # prepend de contexto do documento ao chunk antes de
+                               # indexar. O prefixo é DETERMINÍSTICO (escopo + título +
+                               # tags + caminho de headings) — nunca extraído por LLM:
+                               # em corpus autorado e atômico isso só adiciona custo
+                               # e ruído (§7.1, §13).
+  rerank: false
+  link_expansion:              # expansão "graph-lite" pelo grafo AUTORADO (§7.1):
+    default_hops: 1            # wikilinks do corpo + supersedes + arestas de
+    max_hops: 2                # memory_link. 0 desliga. O grafo melhora por
+                               # curadoria, não por extração.
+  store: numpy                 # numpy | lancedb | sqlite-vec — sempre em _meta/index/
+                               # numpy = brute-force cosine, sem dep pesada: em vault
+                               # pessoal (~1e4 chunks) leva <10ms e ANN não compra nada.
+                               # lancedb/sqlite-vec exigem o extra correspondente.
+
+# ── Manutenção ────────────────────────────────────────────────────
+maintenance:
+  decay_days: 90               # sem acesso há N dias → status: arquivado (nunca deletar)
+  dedup_similarity: 0.92       # acima disso, candidato a fusão/supersedes NO MESMO escopo
+  commit_prefix: "chore(ai-memory):"
