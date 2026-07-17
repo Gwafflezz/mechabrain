@@ -786,10 +786,16 @@ def _near_duplicate(duplicate: NearDuplicate) -> dict[str, Any]:
 # Small helpers
 # ══════════════════════════════════════════════════════════════════════
 def _strip_wikilink(text: str) -> str:
-    """Reduce ``[[id]]`` to ``id``; leave a bare id or path untouched."""
+    """Reduce a wikilink to its target id; leave a bare id or path untouched.
+
+    Handles every form the authored graph itself understands: ``[[id]]``,
+    ``[[id|alias]]`` and ``[[id#heading]]`` (and their combination -- the
+    target is what precedes ``#`` and ``|``).
+    """
     stripped = text.strip()
     if stripped.startswith("[[") and stripped.endswith("]]"):
-        return stripped[2:-2].strip()
+        inner = stripped[2:-2]
+        return inner.split("|", 1)[0].split("#", 1)[0].strip()
     return stripped
 
 

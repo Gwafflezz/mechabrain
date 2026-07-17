@@ -490,3 +490,52 @@ def test_archived_penalty_applied_when_explicitly_included(
     assert set(hits) == {"live", "dead"}
     # Identical bodies -> identical fused score; the archived one is penalised.
     assert hits["dead"].score == pytest.approx(hits["live"].score * ARCHIVED_PENALTY, rel=1e-6)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Regression: the floor member of one ranking is a hit, not a cull (§7.1)
+# ══════════════════════════════════════════════════════════════════════
+def test_floor_hit_survives_in_a_small_corpus(
+    tmp_vault: VaultPaths, manifest_ci: Manifest, write_note
+) -> None:
+    """Two matching notes in a two-note corpus must both come back.
+
+    Min-max floors the weaker member of each half to 0; when the same note is
+    the floor of both halves its fused score is exactly 0. The old cull
+    (`score <= 0.0: continue`) silently dropped it -- in a small corpus that
+    loses a valid match entirely.
+    """
+    from datetime import date
+
+    def fm(title: str) -> dict:
+        return {
+            "title": title,
+            "tags": ["mem/semantic", "agent/alpha"],
+            "created": date(2026, 1, 15),
+            "modified": date(2026, 1, 15),
+            "agent": "alpha",
+            "scope": "proj-a",
+            "source": "test",
+            "confidence": "medium",
+            "last_accessed": date(2026, 1, 15),
+            "status": "ativo",
+        }
+
+    strong = write_note(
+        tmp_vault.semantic_dir / "2026-01-15_INS_zebraxq-a.md",
+        fm("Zebraxq A"),
+        "zebraxq protocol",
+    )
+    weak = write_note(
+        tmp_vault.semantic_dir / "2026-01-15_INS_zebraxq-b.md",
+        fm("Zebraxq B"),
+        "zebraxq protocol with much longer additional unrelated commentary padding",
+    )
+    index_notes(tmp_vault, manifest_ci, [strong, weak])
+
+    with Retriever(tmp_vault, manifest_ci) as retriever:
+        hits = retriever.search("zebraxq protocol", k=8)
+
+    ids = {hit.id for hit in hits}
+    assert "2026-01-15_INS_zebraxq-a" in ids
+    assert "2026-01-15_INS_zebraxq-b" in ids, "floor member was culled (regression)"

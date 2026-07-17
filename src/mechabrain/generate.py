@@ -274,6 +274,10 @@ def render_schema(manifest: Manifest) -> str:
         tags_example=_tags_example(manifest),
         confidence_values="|".join(CONFIDENCE_LEVELS),
         status_values="|".join((STATUS_ACTIVE, STATUS_ARCHIVED, STATUS_DEPRECATED)),
+        # Markdown table cells need the pipes escaped (R6.4: the rendered
+        # schema must stay readable) -- the YAML block above uses the plain form.
+        confidence_values_cell=" \\| ".join(CONFIDENCE_LEVELS),
+        status_values_cell=" \\| ".join((STATUS_ACTIVE, STATUS_ARCHIVED, STATUS_DEPRECATED)),
         agent_ids_inline=_inline_code_list(
             manifest.agent_ids(), empty="_(registry vazio)_"
         ),

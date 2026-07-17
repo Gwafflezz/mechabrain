@@ -377,3 +377,27 @@ def test_sample_notes_span_types_scopes_and_status(
     assert "Evidence" in by_id["PROC_deploy-playbook"].body
     assert "[[2026-01-15_INS_vector-search]]" in by_id["2026-01-15_RES_link-expansion"].body
     assert {note.frontmatter["scope"] for note in sample_notes} == {"proj-a", "proj-b", "global"}
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Regression: no YAML anchors/aliases in written frontmatter (§6)
+# ══════════════════════════════════════════════════════════════════════
+def test_serialized_frontmatter_never_emits_yaml_anchors() -> None:
+    """Reusing one date object must not produce `&id001` / `*id001` (§6).
+
+    The writer stamps `created`, `modified` and `last_accessed` from the same
+    ``date`` value; PyYAML's default dumper aliases repeated objects, which
+    diverges from the spec's canonical frontmatter and confuses host-app
+    frontmatter parsers.
+    """
+    from datetime import date
+
+    from mechabrain.note import parse_frontmatter, serialize_frontmatter
+
+    stamp = date(2026, 7, 17)
+    text = serialize_frontmatter(
+        {"title": "X", "created": stamp, "modified": stamp, "last_accessed": stamp}
+    )
+    assert "&id" not in text and "*id" not in text, text
+    parsed, _ = parse_frontmatter(text + "\ncorpo\n")
+    assert parsed["created"] == parsed["modified"] == parsed["last_accessed"] == stamp

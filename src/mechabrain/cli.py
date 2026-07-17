@@ -529,24 +529,29 @@ def _run_daemon(
 ) -> int | None:
     """Delegate to the MCP server component, or explain that it is not installed.
 
-    ``serve`` is the one subcommand whose engine lives in a separate kernel
-    component (the MCP server), so this looks it up lazily and calls its
-    ``serve(paths, manifest, *, host, port, stdio, progress)`` entry point. When
-    that component is absent the command fails with an actionable message rather
-    than a raw ``ImportError`` -- every other subcommand works without it.
+    ``serve`` is the one subcommand that needs the ``mcp`` package at runtime,
+    so this imports the daemon lazily and calls
+    :func:`mechabrain.mcp_server.serve`. A missing ``mcp`` dependency fails
+    with an actionable message rather than a raw ``ImportError`` -- every other
+    subcommand works without it.
     """
+    del manifest, emit  # the daemon loads the manifest itself and logs its own progress
     try:
-        from .server import serve as serve_entry  # noqa: PLC0415 -- optional component
+        from .mcp_server import serve as serve_entry  # noqa: PLC0415 -- needs `mcp` at runtime
     except ImportError as exc:
         raise MechabrainError(
-            "the MCP daemon component is not available in this build",
+            "the MCP daemon cannot start: the `mcp` package is not importable",
             rule="R7.4",
-            hint="the `serve` daemon ships as a separate kernel component; "
+            hint="reinstall mechabrain (the `mcp` dependency is required for serve); "
             "init, sync, reindex, consolidate and check do not require it",
         ) from exc
-    return serve_entry(
-        paths, manifest, host=host, port=port, stdio=stdio, progress=emit
+    serve_entry(
+        vault=paths.root,
+        host=host,
+        port=port,
+        transport="stdio" if stdio else "sse",
     )
+    return 0
 
 
 # ══════════════════════════════════════════════════════════════════════

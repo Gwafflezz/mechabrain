@@ -399,11 +399,11 @@ class Retriever:
         """
         candidates: list[_Candidate] = []
         for note_id, score in note_score.items():
-            # min-max floors the weakest member of each list to 0; a note that
-            # scores 0 in both halves contributed to neither ranking and is not
-            # a hit. This never drops a top-k result -- the pool is far larger.
-            if score <= 0.0:
-                continue
+            # Every key here is a member of at least one half's ranking (the
+            # fold unions them), so a fused score of 0 -- the floor member of
+            # one min-max'd list, absent from the other -- is still a match.
+            # Culling it would silently lose a valid hit in a small corpus;
+            # it stays, ranked last, and `k` caps the output.
             note = self._load(note_id)
             if note is None:
                 continue

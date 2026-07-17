@@ -53,11 +53,18 @@ class _FrontmatterDumper(yaml.SafeDumper):
     """SafeDumper that indents block sequences under their key.
 
     PyYAML's default emits list items flush with the parent key, which is legal
-    YAML but reads badly in an editor showing a human's own vault.
+    YAML but reads badly in an editor showing a human's own vault. Aliases are
+    disabled for the same reason: reusing one date object for `created`,
+    `modified` and `last_accessed` would otherwise emit `&id001`/`*id001`
+    anchors -- legal YAML that diverges from the §6 canonical form and confuses
+    frontmatter parsers in host apps.
     """
 
     def increase_indent(self, flow: bool = False, indentless: bool = False) -> None:
         return super().increase_indent(flow, False)
+
+    def ignore_aliases(self, data: Any) -> bool:
+        return True
 
 
 # ══════════════════════════════════════════════════════════════════════

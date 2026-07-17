@@ -751,3 +751,18 @@ class TestWriters:
             tmp_vault.index_file,
         ):
             assert not ABSOLUTE_PATH_RE.search(path.read_text(encoding="utf-8")), path
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Regression: schema.md table cells escape the pipes (R6.4)
+# ══════════════════════════════════════════════════════════════════════
+def test_schema_table_cells_escape_pipes(manifest_ci: Manifest) -> None:
+    """`low|medium|high` inside a Markdown table cell breaks the row."""
+    from mechabrain.generate import render_schema
+
+    text = render_schema(manifest_ci)
+    table_rows = [line for line in text.splitlines() if line.startswith("| `confidence`")]
+    assert table_rows, "schema.md lost its confidence row"
+    assert "low \\| medium \\| high" in table_rows[0], table_rows[0]
+    status_rows = [line for line in text.splitlines() if line.startswith("| `status`")]
+    assert status_rows and "\\|" in status_rows[0], status_rows

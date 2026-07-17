@@ -437,12 +437,26 @@ def test_serve_rejects_non_integer_env_port(
     assert cli.PORT_ENV_VAR in capsys.readouterr().err
 
 
-def test_serve_reports_missing_daemon_component(
-    tmp_vault: VaultPaths, capsys: pytest.CaptureFixture[str]
+def test_serve_reports_missing_daemon_dependency(
+    tmp_vault: VaultPaths,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # No monkeypatch: the real _run_daemon tries to import the absent server.
+    """A broken `mcp` install fails loudly with the R7.4 hint, exit 1.
+
+    Regression origin: the CLI once imported a module that did not exist and a
+    friendly fallback masked it as "component not available" -- so this also
+    guards that the *real* module import is what the fallback protects.
+    Setting the ``sys.modules`` entry to ``None`` makes the lazy
+    ``from .mcp_server import serve`` raise ``ImportError`` exactly as a
+    missing dependency would.
+    """
+    import sys
+
+    monkeypatch.setitem(sys.modules, "mechabrain.mcp_server", None)
     assert main(["serve", "--vault", str(tmp_vault.root)]) == 1
-    assert "not available" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "R7.4" in err and "mcp" in err
 
 
 # ══════════════════════════════════════════════════════════════════════
