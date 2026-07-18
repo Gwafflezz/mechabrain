@@ -34,6 +34,7 @@ __all__ = [
     "SCHEMA_FILE",
     "LINKS_FILE",
     "ACCESS_FILE",
+    "ACTIONS_FILE",
     "MANAGED_BLOCK_BEGIN",
     "MANAGED_BLOCK_END",
     "TYPE_FOLDERS",
@@ -107,6 +108,8 @@ SCHEMA_FILE: Final[str] = "schema.md"
 LINKS_FILE: Final[str] = "links.jsonl"
 #: Access log feeding decay (R7.2). Derived + gitignored: lives under index/.
 ACCESS_FILE: Final[str] = "access.jsonl"
+#: Kernel action log for observability (v0.2.1). Derived + gitignored: index/.
+ACTIONS_FILE: Final[str] = "actions.jsonl"
 
 # ── Managed block markers (§10) ─────────────────────────────────────
 # The kernel regenerates only what sits between these markers in AGENTS.md;

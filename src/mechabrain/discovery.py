@@ -24,6 +24,7 @@ from typing import Final
 
 from .contract import (
     ACCESS_FILE,
+    ACTIONS_FILE,
     AGENTS_FILE,
     CONFIG_FILE,
     EPISODIC_DIR,
@@ -74,6 +75,7 @@ class VaultPaths:
         config_file: ``_meta/config.yaml`` -- the manifest.
         links_file: ``_meta/links.jsonl`` -- authored edges; git-tracked.
         access_file: ``_meta/index/access.jsonl`` -- access log; gitignored (R7.2).
+        actions_file: ``_meta/index/actions.jsonl`` -- kernel action log; gitignored.
     """
 
     root: Path
@@ -93,6 +95,7 @@ class VaultPaths:
     schema_file: Path
     links_file: Path
     access_file: Path
+    actions_file: Path
 
     @classmethod
     def for_root(cls, root: Path | str) -> "VaultPaths":
@@ -123,6 +126,7 @@ class VaultPaths:
             schema_file=meta_dir / SCHEMA_FILE,
             links_file=meta_dir / LINKS_FILE,
             access_file=index_dir / ACCESS_FILE,
+            actions_file=index_dir / ACTIONS_FILE,
         )
 
     # ── Derived paths ───────────────────────────────────────────────

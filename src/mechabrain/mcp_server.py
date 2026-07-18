@@ -75,6 +75,7 @@ from typing import Any, Final
 from mcp.server.fastmcp import FastMCP
 
 from .access import AccessKind, AccessLog
+from .actions import ActionLog
 from .consolidate import CONSOLIDATION_REPORT_FILE
 from .contract import STATUS_ACTIVE, MemoryType
 from .discovery import VaultPaths, discover_vault
@@ -353,6 +354,17 @@ class MemoryService:
                 lock=True,
             )
             if result.rejected:
+                # Observability (v0.2.1): a rejection exists nowhere else --
+                # the note was never written -- so the action log is its record.
+                ActionLog.for_vault(self.paths).record(
+                    "write_rejected",
+                    type=str(type),
+                    agent=str(meta.get("agent") or ""),
+                    scope=str(meta.get("scope") or ""),
+                    title=str(meta.get("title") or ""),
+                    reason=result.reason.splitlines()[0] if result.reason else "",
+                    near_duplicates=len(result.near_duplicates),
+                )
                 return {
                     "rejected": True,
                     "reason": result.reason,
@@ -361,6 +373,15 @@ class MemoryService:
                 }
             self._indexer.reindex()
             self._drop_snapshots()
+            ActionLog.for_vault(self.paths).record(
+                "write_accepted",
+                type=str(type),
+                id=result.note_id,
+                agent=str(meta.get("agent") or ""),
+                scope=str(meta.get("scope") or ""),
+                superseded=list(result.superseded),
+                warnings=[issue.check for issue in result.warnings],
+            )
             return {
                 "rejected": False,
                 "path": self.paths.relative(result.path) if result.path is not None else "",
@@ -408,6 +429,12 @@ class MemoryService:
             result = writer_propose(
                 target_path, proposed_change, rationale, meta, self.manifest, self.paths
             )
+            ActionLog.for_vault(self.paths).record(
+                "proposal",
+                id=result.note_id,
+                target=result.target,
+                agent=str(meta.get("agent") or ""),
+            )
         return {
             "path": self.paths.relative(result.path) if result.path is not None else "",
             "id": result.note_id,
@@ -452,6 +479,9 @@ class MemoryService:
             graph = self._get_graph()
             edge = graph.add_edge(a, b, relation, agent)
             self._drop_snapshots()
+            ActionLog.for_vault(self.paths).record(
+                "link", a=edge.source, b=edge.target, relation=edge.relation, agent=agent
+            )
         return {
             "a": edge.source,
             "b": edge.target,
