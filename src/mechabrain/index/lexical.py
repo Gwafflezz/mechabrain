@@ -396,11 +396,12 @@ class LexicalIndex:
             :class:`~mechabrain.discovery.VaultPaths`, never this module (R4.2).
     """
 
-    __slots__ = ("path", "_connection")
+    __slots__ = ("path", "_connection", "_in_transaction")
 
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
         self._connection: sqlite3.Connection | None = None
+        self._in_transaction = False
 
     # ── Lifecycle ───────────────────────────────────────────────────
     @property
@@ -467,10 +468,15 @@ class LexicalIndex:
         )
 
     def close(self) -> None:
-        """Close the connection. Idempotent; the instance reopens on next use."""
+        """Close the connection. Idempotent; the instance reopens on next use.
+
+        Closing inside an open :meth:`transaction` rolls it back -- that is the
+        crash-consistent reading: an unfinished batch never half-lands.
+        """
         if self._connection is not None:
             self._connection.close()
             self._connection = None
+            self._in_transaction = False
 
     def __enter__(self) -> "LexicalIndex":
         return self
@@ -652,7 +658,28 @@ class LexicalIndex:
                 hint="the index is derived state: run `mechabrain reindex --full`",
             ) from exc
 
-    # ── Internals ───────────────────────────────────────────────────
+    # ── Transactions ────────────────────────────────────────────────
+    def transaction(self) -> "_Transaction":
+        """One write transaction spanning any number of operations.
+
+        ::
+
+            with index.transaction():
+                index.clear()
+                index.upsert(chunks)
+
+        Nothing is committed until the block exits cleanly; any exception rolls
+        the whole batch back, leaving the previous contents intact. This is what
+        makes a rebuild atomic: a process that dies between ``clear()`` and the
+        last ``upsert()`` never destroys the index it meant to replace (SQLite
+        rolls an uncommitted transaction back on the next open).
+
+        Reentrant: ``upsert``/``delete``/``clear`` each open their own
+        transaction when called bare, and join the enclosing one when called
+        inside this block -- only the outermost block commits or rolls back.
+        """
+        return _Transaction(self)
+
     def _transaction(self) -> "_Transaction":
         return _Transaction(self)
 
@@ -662,18 +689,24 @@ class _Transaction:
 
     The connection runs in autocommit (``isolation_level=None``) so that DDL and
     PRAGMAs behave; writes therefore state their own BEGIN/COMMIT rather than
-    relying on sqlite3's implicit-transaction heuristics.
+    relying on sqlite3's implicit-transaction heuristics. Nested instances join
+    the outermost transaction rather than issuing a BEGIN SQLite would reject.
     """
 
-    __slots__ = ("_index", "_connection")
+    __slots__ = ("_index", "_connection", "_nested")
 
     def __init__(self, index: LexicalIndex) -> None:
         self._index = index
         self._connection: sqlite3.Connection | None = None
+        self._nested = False
 
     def __enter__(self) -> sqlite3.Connection:
         connection = self._index.connection
-        connection.execute("BEGIN IMMEDIATE")
+        if self._index._in_transaction:
+            self._nested = True
+        else:
+            connection.execute("BEGIN IMMEDIATE")
+            self._index._in_transaction = True
         self._connection = connection
         return connection
 
@@ -684,8 +717,9 @@ class _Transaction:
         tb: TracebackType | None,
     ) -> bool:
         connection = self._connection
-        if connection is None:
+        if connection is None or self._nested:
             return False
+        self._index._in_transaction = False
         try:
             if exc_type is None:
                 connection.execute("COMMIT")

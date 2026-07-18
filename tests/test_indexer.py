@@ -114,6 +114,40 @@ def test_full_rebuild_replaces_deleted_notes(
     assert report.notes_indexed == len(sample_notes) - 1
 
 
+def test_crash_mid_rebuild_preserves_the_previous_index(
+    indexer: Indexer,
+    tmp_vault: VaultPaths,
+    manifest_ci: Manifest,
+    sample_notes: list[Note],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rebuild that dies after the clear must not destroy the old index (R7.5).
+
+    The regression behind the atomic rebuild: the lexical ``clear()`` used to
+    commit on its own before the embedding pass, so a process killed mid-embed
+    (an OOM) left the BM25 index empty -- a maintenance job destroying the very
+    index it meant to refresh. Both halves must survive: the transaction rolls
+    the lexical clear back, and the numpy store never flushed.
+    """
+    indexer.reindex(full=True)
+    chunks_before = open_store(tmp_vault).count()
+    ids_before = lexical_ids(tmp_vault)
+    assert chunks_before > 0
+
+    def boom(self: Indexer, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("simulated OOM during the embedding pass")
+
+    monkeypatch.setattr(Indexer, "_write_targets", boom)
+    with pytest.raises(RuntimeError):
+        indexer.reindex(full=True)
+
+    # Fresh handles: what a process restarted after the crash sees on disk.
+    assert open_store(tmp_vault).count() == chunks_before
+    assert lexical_ids(tmp_vault) == ids_before
+    query = query_vector(manifest_ci, "brute-force cosine is fast enough")
+    assert open_store(tmp_vault).search(query, k=1), "old index no longer searchable"
+
+
 # ══════════════════════════════════════════════════════════════════════
 # Retrieval sanity: the pipeline actually produces a searchable index
 # ══════════════════════════════════════════════════════════════════════

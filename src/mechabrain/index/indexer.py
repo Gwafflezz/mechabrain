@@ -107,7 +107,7 @@ from typing import Any, Final
 from ..contract import MARKDOWN_SUFFIX, STATUS_ACTIVE, MemoryType, type_for_folder
 from ..discovery import VaultPaths
 from ..errors import NoteNotFound
-from ..locking import DEFAULT_LOCK_TIMEOUT, file_lock
+from ..locking import DEFAULT_LOCK_TIMEOUT, FileLock
 from ..manifest import Manifest
 from ..note import Note, note_id_for, write_atomic
 from .chunk import Chunk, chunk_note
@@ -288,6 +288,11 @@ class Indexer:
         progress: Default progress sink for every operation. A per-call
             ``progress`` argument overrides it.
         lock_timeout: Seconds to wait for the index lock before failing (R7.4).
+        lock: A :class:`~mechabrain.locking.FileLock` on the index lock file to
+            share. A caller already holding the lock for a wider cycle (the
+            consolidator, §9) passes its own instance so the nested acquire
+            refcounts instead of deadlocking -- ``FileLock`` is reentrant within
+            one instance only. Default: a fresh lock per operation.
     """
 
     __slots__ = (
@@ -297,6 +302,7 @@ class Indexer:
         "_lock_timeout",
         "_provider",
         "_state_path",
+        "_lock",
     )
 
     def __init__(
@@ -307,6 +313,7 @@ class Indexer:
         provider: EmbeddingProvider | None = None,
         progress: Progress | None = None,
         lock_timeout: float = DEFAULT_LOCK_TIMEOUT,
+        lock: FileLock | None = None,
     ) -> None:
         self.paths = paths
         self.manifest = manifest
@@ -314,6 +321,7 @@ class Indexer:
         self._lock_timeout = lock_timeout
         self._provider = provider
         self._state_path = paths.index_dir / STATE_FILE
+        self._lock = lock
 
     def __repr__(self) -> str:
         return f"Indexer({str(self.paths.root)!r}, store={self.manifest.retrieval.store!r})"
@@ -336,11 +344,7 @@ class Indexer:
                 ``lock_timeout`` (R7.4).
         """
         emit = progress or self._progress
-        with file_lock(
-            self.paths.index_dir / INDEX_LOCK_FILE,
-            timeout=self._lock_timeout,
-            purpose="reindex --full" if full else "reindex",
-        ):
+        with self._index_lock("reindex --full" if full else "reindex"):
             provider = self._embedder()
             store = self._open_store()
             with self._open_lexical() as lexical:
@@ -384,11 +388,7 @@ class Indexer:
                 hint="pass an existing note; to drop a deleted note use remove_note()",
             )
         emit = progress or self._progress
-        with file_lock(
-            self.paths.index_dir / INDEX_LOCK_FILE,
-            timeout=self._lock_timeout,
-            purpose="index_note",
-        ):
+        with self._index_lock("index_note"):
             provider = self._embedder()
             store = self._open_store()
             with self._open_lexical() as lexical:
@@ -401,12 +401,13 @@ class Indexer:
                 target = self._target_for(note_path)
                 previous = state.notes.get(target.relative)
                 deletions = {previous.note_id: previous.chunks} if previous else {}
-                deleted = self._delete_chunks(store, lexical, deletions, emit)
-                records, written, read_only = self._write_targets(
-                    store, lexical, provider, [target], emit
-                )
+                with lexical.transaction():
+                    deleted = self._delete_chunks(store, lexical, deletions, emit)
+                    records, written, read_only = self._write_targets(
+                        store, lexical, provider, [target], emit
+                    )
+                    store.flush()
                 state.notes.update(records)
-                store.flush()
                 self._save_state(state)
                 return IndexReport(
                     full=False,
@@ -432,11 +433,7 @@ class Indexer:
         """
         note_id = self._note_id_of(note)
         emit = progress or self._progress
-        with file_lock(
-            self.paths.index_dir / INDEX_LOCK_FILE,
-            timeout=self._lock_timeout,
-            purpose="remove_note",
-        ):
+        with self._index_lock("remove_note"):
             store = self._open_store()
             with self._open_lexical() as lexical:
                 state = _IndexState.load(self._state_path)
@@ -488,17 +485,28 @@ class Indexer:
         *,
         reason: str | None,
     ) -> IndexReport:
-        """Clear both indexes and index every target note from scratch."""
+        """Clear both indexes and index every target note from scratch.
+
+        Atomic with respect to a crash (R7.5): the lexical clear and every
+        upsert share one SQLite transaction, committed only after the store has
+        flushed, and the numpy store assembles in memory (``autosave=False``)
+        and persists once at the end. A process that dies mid-rebuild -- the OOM
+        an embedding pass can hit -- therefore leaves *both* indexes exactly as
+        they were; a maintenance job must never destroy the index it meant to
+        replace. (The optional eager-committing stores keep their own weaker
+        semantics; the invariant here is for the default.)
+        """
         emit("full rebuild: clearing the index")
         old_chunks = store.count()
-        store.clear()
-        lexical.clear()
 
         targets, ambiguous = self._scan_targets()
-        records, written, read_only = self._write_targets(
-            store, lexical, provider, targets, emit
-        )
-        store.flush()
+        with lexical.transaction():
+            store.clear()
+            lexical.clear()
+            records, written, read_only = self._write_targets(
+                store, lexical, provider, targets, emit
+            )
+            store.flush()
         self._save_state(_IndexState(self._fingerprint(provider), records))
         return IndexReport(
             full=True,
@@ -556,15 +564,16 @@ class Indexer:
 
         # Deletions first: a note id may move files (its old path vanished while
         # a same-id file became the winner), and deleting before upserting is
-        # what makes that handover land the new chunks, not wipe them.
-        deleted = self._delete_chunks(store, lexical, deletions, emit)
-        records, written, read_only = self._write_targets(
-            store, lexical, provider, to_index, emit
-        )
+        # what makes that handover land the new chunks, not wipe them. One
+        # transaction around both, for the same crash-atomicity as _rebuild.
+        with lexical.transaction():
+            deleted = self._delete_chunks(store, lexical, deletions, emit)
+            records, written, read_only = self._write_targets(
+                store, lexical, provider, to_index, emit
+            )
+            if deleted or written:
+                store.flush()
         kept.update(records)
-
-        if deleted or written:
-            store.flush()
         self._save_state(_IndexState(self._fingerprint(provider), kept))
         return IndexReport(
             full=False,
@@ -849,6 +858,22 @@ class Indexer:
 
     def _open_lexical(self) -> LexicalIndex:
         return LexicalIndex(self.paths.index_dir / LEXICAL_DB_FILENAME)
+
+    def _index_lock(self, purpose: str) -> FileLock:
+        """The index lock for one operation: shared instance, or a fresh one.
+
+        The shared instance (constructor ``lock``) is what lets the §9 cycle
+        hold the lock across every step and still call in here -- the nested
+        ``with`` refcounts. A second *instance* on the same path would deadlock
+        against the first until the timeout.
+        """
+        if self._lock is not None:
+            return self._lock
+        return FileLock(
+            self.paths.index_dir / INDEX_LOCK_FILE,
+            timeout=self._lock_timeout,
+            purpose=purpose,
+        )
 
     def _save_state(self, state: _IndexState) -> None:
         write_atomic(self._state_path, state.to_json())

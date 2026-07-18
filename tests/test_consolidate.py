@@ -20,6 +20,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from mechabrain.access import AccessKind, AccessLog
 from mechabrain.consolidate import (
     CONSOLIDATION_REPORT_FILE,
@@ -28,6 +30,9 @@ from mechabrain.consolidate import (
 )
 from mechabrain.contract import STATUS_ACTIVE, STATUS_ARCHIVED, STATUS_DEPRECATED
 from mechabrain.discovery import VaultPaths
+from mechabrain.index.embed import from_manifest as embedder_from_manifest
+from mechabrain.index.indexer import Indexer
+from mechabrain.index.lexical import LEXICAL_DB_FILENAME, LexicalIndex
 from mechabrain.index.store import from_manifest as store_from_manifest
 from mechabrain.manifest import Manifest, load_manifest
 from mechabrain.note import Note
@@ -479,6 +484,120 @@ def test_rebuild_reflects_freshly_archived_status_in_index_meta(
     metas = (paths.index_dir / "vectors.jsonl").read_text(encoding="utf-8")
     assert stale.note_id in metas
     assert STATUS_ARCHIVED in metas
+
+
+def test_crash_mid_rebuild_never_destroys_the_index(
+    make_vault: Callable[..., VaultPaths],
+    write_note: Callable[..., Note],
+    manifest_data_ci: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§9.5/R7.5: a consolidation killed mid-reindex leaves the old index usable.
+
+    The regression that motivated the atomic rebuild: consolidate used to open
+    the store with autosave on, ``clear()`` truncated ``vectors.npy`` /
+    ``vectors.jsonl`` on disk immediately, and only then re-embedded -- so the
+    OOM a long embedding pass can hit left the vector store empty (0 bytes),
+    worse than not consolidating at all.
+    """
+    paths, manifest = _vault(make_vault, manifest_data_ci, decay_days=90)
+    _sem(
+        write_note,
+        paths.semantic_dir / "2026-12-30_INS_alive.md",
+        "proj-a",
+        "A fact that must survive a crashed maintenance run.",
+        last_accessed=date(2026, 12, 30),
+    )
+    consolidate(paths, manifest, today=date(2026, 12, 30))
+    chunks_before = store_from_manifest(manifest, paths).count()
+    assert chunks_before > 0
+
+    # Give the next cycle indexing work, then kill it inside the write pass --
+    # after the clear, before any new chunk lands.
+    _sem(
+        write_note,
+        paths.semantic_dir / "2026-12-30_INS_newcomer.md",
+        "proj-a",
+        "A brand new fact whose indexing dies halfway through.",
+        last_accessed=date(2026, 12, 30),
+    )
+
+    def boom(self: Indexer, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("simulated OOM during the embedding pass")
+
+    monkeypatch.setattr(Indexer, "_write_targets", boom)
+    with pytest.raises(RuntimeError):
+        consolidate(paths, manifest, today=date(2026, 12, 30))
+
+    # A fresh process after the crash still sees the whole previous index.
+    assert store_from_manifest(manifest, paths).count() == chunks_before
+    with LexicalIndex(paths.index_dir / LEXICAL_DB_FILENAME) as lexical:
+        assert "2026-12-30_INS_alive" in lexical.note_ids()
+    assert (paths.index_dir / "vectors.jsonl").stat().st_size > 0
+
+
+class _SpyProvider:
+    """The real provider behind a counter: records every embed batch size."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.batches: list[int] = []
+
+    def embed_texts(self, texts: Any) -> Any:
+        items = list(texts)
+        self.batches.append(len(items))
+        return self._inner.embed_texts(items)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def test_consolidate_reembeds_only_what_the_cycle_changed(
+    make_vault: Callable[..., VaultPaths],
+    write_note: Callable[..., Note],
+    manifest_data_ci: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§9.5: the rebuild is incremental -- one decayed note, one note re-embedded.
+
+    The regression: consolidate used to re-chunk and re-embed the entire corpus
+    every cycle (a >30-minute pass over a few hundred notes with a real model).
+    The mtime+hash diff must confine the re-embed to the notes the cycle
+    actually changed; the document-level dedup pass is the only full sweep left.
+    """
+    paths, manifest = _vault(make_vault, manifest_data_ci, decay_days=90)
+    stale = _sem(
+        write_note,
+        paths.semantic_dir / "2026-01-15_INS_stale.md",
+        "proj-a",
+        "A fact nobody reads any more, about an abandoned migration.",
+        last_accessed=_OLD,
+    )
+    for ordinal, topic in enumerate(("indexing", "locking", "chunking")):
+        _sem(
+            write_note,
+            paths.semantic_dir / f"2026-12-30_INS_fresh-{ordinal}.md",
+            "proj-a",
+            f"A live, regularly read fact about {topic} internals.",
+            title=f"Fact about {topic}",
+            last_accessed=date(2026, 12, 30),
+        )
+
+    spy = _SpyProvider(embedder_from_manifest(manifest))
+    monkeypatch.setattr("mechabrain.consolidate.embedder_from_manifest", lambda _m: spy)
+
+    first = consolidate(paths, manifest, today=_OLD)  # no state yet: a full build
+    assert first.counts["notes_reindexed"] == 4
+
+    spy.batches.clear()
+    second = consolidate(paths, manifest, today=_FUTURE)  # decays only the stale note
+
+    assert [d.note_id for d in second.decayed] == [stale.note_id]
+    assert second.counts["notes_reindexed"] == 1
+    assert 0 < second.counts["chunks_indexed"] < first.counts["chunks_indexed"]
+    # Everything embedded this cycle: one dedup pass over the 4 active documents
+    # plus the decayed note's chunks. Never the whole corpus again.
+    assert sum(spy.batches) == 4 + second.counts["chunks_indexed"]
 
 
 # ══════════════════════════════════════════════════════════════════════

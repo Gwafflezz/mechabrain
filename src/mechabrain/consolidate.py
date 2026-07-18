@@ -33,7 +33,10 @@ Step    What this module does
         linked to the successor. The "contradicted by a more recent run"
         case is judgement and cannot be detected here -- see the module
         note on what is *not* covered.
-5       **Rebuild** (§9.5, R8.1). Full reindex (vectors + BM25) and
+5       **Rebuild** (§9.5, R8.1). *Incremental* reindex (vectors + BM25)
+        through :class:`~mechabrain.index.indexer.Indexer` -- only the
+        notes this cycle touched (decayed, deprecated, stamped) or a human
+        edited are re-embedded; the mtime+hash diff finds them. Then
         regeneration of ``index.md``/``indices/`` and ``hot.md`` -- the
         surfaces only the consolidator writes.
 6       **Commit** (§9.6). One commit with ``maintenance.commit_prefix``,
@@ -84,11 +87,11 @@ from .errors import MechabrainError
 from .gate import FULL_GATE_TYPES
 from .generate import write_hot, write_index
 from .graph import SUPERSEDES_RELATION, LinkGraph
-from .index.chunk import chunk_note
+from .index.embed import EmbeddingProvider
 from .index.embed import from_manifest as embedder_from_manifest
-from .index.lexical import LEXICAL_DB_FILENAME, LexicalChunk, LexicalIndex
-from .index.store import INDEX_LOCK_FILE, from_manifest as store_from_manifest
-from .locking import file_lock
+from .index.indexer import Indexer
+from .index.store import INDEX_LOCK_FILE
+from .locking import FileLock
 from .manifest import Manifest
 from .note import Note, iter_notes, wikilink_for, write_atomic
 
@@ -276,13 +279,19 @@ def consolidate(
     deprecatable = _deprecatable_procedurals(graph, memory_by_id)
 
     changed: set[Path] = set()
+    # One provider for the whole cycle (construction is lazy and offline): the
+    # dedup pass and the reindex must share a model load, not repeat it.
+    provider = embedder_from_manifest(manifest)
+    # One lock *instance* for the whole cycle -- the Indexer reuses it (FileLock
+    # is reentrant within an instance), so step 5 nests instead of deadlocking.
+    lock = FileLock(paths.index_dir / INDEX_LOCK_FILE, purpose=_LOCK_PURPOSE)
 
-    with file_lock(paths.index_dir / INDEX_LOCK_FILE, purpose=_LOCK_PURPOSE):
+    with lock:
         # 1 -- flush accesses (§9.1, R7.3)
         accesses, accesses_applied = _apply_access(paths, memory_by_id, dry_run, changed)
 
         # 2 -- detect duplicates (§9.2): report only, never merge
-        merge_candidates, cross_scope = _detect_duplicates(memory_notes, manifest)
+        merge_candidates, cross_scope = _detect_duplicates(memory_notes, manifest, provider)
 
         # 3 -- decay (§9.3): archive, never delete (P8)
         decayed = _decay(memory_notes, reference, manifest, deprecatable, dry_run, changed)
@@ -290,10 +299,16 @@ def consolidate(
         # 4 -- deprecate procedural (§9.4)
         deprecated = _deprecate(deprecatable, memory_by_id, dry_run, changed)
 
-        # 5 -- rebuild (§9.5, R8.1): reindex + regenerate surfaces
+        # 5 -- rebuild (§9.5, R8.1): incremental reindex + regenerate surfaces.
+        # Steps 1, 3 and 4 already wrote their frontmatter to disk (note.write()
+        # is where each stamp lands), so the mtime+hash diff sees exactly the
+        # notes this cycle touched and re-embeds only those.
         chunk_count = 0
+        notes_reindexed = 0
         if not dry_run:
-            chunk_count = _rebuild_index(paths, manifest, (*memory_notes, *readonly_notes))
+            index_report = Indexer(paths, manifest, provider=provider, lock=lock).reindex()
+            chunk_count = index_report.chunks_written
+            notes_reindexed = index_report.notes_indexed
             active_scopes = _active_scopes(accesses, memory_by_id, manifest)
             write_index(paths, [t.note for t in memory_notes], manifest)
             write_hot(
@@ -316,6 +331,7 @@ def consolidate(
         "cross_scope_similar": len(cross_scope),
         "decayed": len(decayed),
         "deprecated": len(deprecated),
+        "notes_reindexed": notes_reindexed,
         "chunks_indexed": chunk_count,
     }
     report = ConsolidationReport(
@@ -485,7 +501,7 @@ def _stamp_last_accessed(note: Note, when: date) -> bool:
 # Step 2 -- detect duplicates (§9.2)
 # ══════════════════════════════════════════════════════════════════════
 def _detect_duplicates(
-    memory: Sequence[_Typed], manifest: Manifest
+    memory: Sequence[_Typed], manifest: Manifest, provider: EmbeddingProvider
 ) -> tuple[list[SimilarPair], list[SimilarPair]]:
     """Find same-type pairs above ``dedup_similarity`` and split by scope.
 
@@ -497,9 +513,10 @@ def _detect_duplicates(
 
     Notes are embedded at document granularity (title + body), one vector each,
     which is enough to *flag* a candidate; the agent that acts on it reads the
-    full notes. This is a second embedding pass beyond the reindex -- accepted:
-    the model is cached per process, and dedup runs before the rebuild in the
-    §9 order.
+    full notes. This is an embedding pass of its own beyond the (incremental)
+    reindex -- accepted: it cannot reuse the index's vectors, which are per
+    *chunk* and carry the contextual prefix, and the model is shared with the
+    reindex via ``provider``.
 
     Returns:
         ``(merge_candidates, cross_scope_similar)``, each sorted by descending
@@ -513,7 +530,6 @@ def _detect_duplicates(
     if len(candidates) < 2:
         return [], []
 
-    provider = embedder_from_manifest(manifest)
     vectors = provider.embed_texts([_document(typed.note) for typed in candidates])
     threshold = manifest.maintenance.dedup_similarity
 
@@ -683,110 +699,11 @@ def _deprecate(
 # ══════════════════════════════════════════════════════════════════════
 # Step 5 -- rebuild (§9.5, R8.1)
 # ══════════════════════════════════════════════════════════════════════
-def _rebuild_index(
-    paths: VaultPaths, manifest: Manifest, index_notes: Sequence[_Typed]
-) -> int:
-    """Full reindex: re-chunk every searchable note into the vector and BM25 stores.
-
-    Indexes *every* memory note whatever its status -- an archived memory stays
-    searchable behind an explicit filter (§9.3); its ``status`` rides along in
-    the metadata so retrieval can exclude it by default. Read-only context is
-    indexed too. ``_inbox/`` is not: a proposal is a request, not a memory.
-
-    The two stores are cleared and rewritten wholesale rather than diffed: a
-    consolidation already walked every note, and a from-scratch rebuild is the
-    one operation that cannot leave a stale chunk behind (P1). Reflects the
-    in-memory notes, so the ``status`` just written by decay/deprecation is what
-    gets indexed.
-
-    Returns:
-        Number of chunks indexed.
-    """
-    contextual = manifest.retrieval.contextual_retrieval
-    pairs: list[tuple[_Typed, Any]] = []
-    for typed in index_notes:
-        for chunk in chunk_note(typed.note, contextual=contextual):
-            pairs.append((typed, chunk))
-
-    store = store_from_manifest(manifest, paths)
-    store.clear()
-    with LexicalIndex(paths.index_dir / LEXICAL_DB_FILENAME) as lexical:
-        lexical.clear()
-        if pairs:
-            provider = embedder_from_manifest(manifest)
-            vectors = provider.embed_texts([chunk.embed_text for _, chunk in pairs])
-            store.upsert(
-                [chunk.chunk_id for _, chunk in pairs],
-                vectors,
-                [_chunk_meta(typed, chunk, paths) for typed, chunk in pairs],
-            )
-            lexical.upsert([_lexical_chunk(typed, chunk) for typed, chunk in pairs])
-    store.flush()
-    return len(pairs)
-
-
-def _chunk_meta(typed: _Typed, chunk: Any, paths: VaultPaths) -> dict[str, Any]:
-    """Metadata stored beside a chunk vector: §7.1 filters plus provenance (R7.1).
-
-    ``path`` is vault-relative -- an absolute path must never reach the index
-    (R4.2); the store refuses one.
-    """
-    note = typed.note
-    assert note.path is not None
-    meta: dict[str, Any] = {
-        "note_id": typed.note_id,
-        "path": paths.relative(note.path),
-        "wikilink": note.wikilink,
-        "title": note.title,
-        "scope": typed.scope,
-        "status": _status_of(note),
-        "section": chunk.section,
-        "ordinal": chunk.ordinal,
-        "excerpt": chunk.raw_text,
-    }
-    if typed.memory_type is not None:
-        meta["type"] = typed.memory_type.value
-    _set_if(meta, "agent", note.get("agent"))
-    _set_if(meta, "profile", note.get("profile"))
-    _set_if(meta, "confidence", note.get("confidence"))
-    created = _as_date(note.get("created"))
-    if created is not None:
-        meta["created"] = created.isoformat()
-    tags = note.tags
-    if tags:
-        meta["tags"] = tags
-    return meta
-
-
-def _lexical_chunk(typed: _Typed, chunk: Any) -> LexicalChunk:
-    note = typed.note
-    return LexicalChunk(
-        chunk_id=chunk.chunk_id,
-        note_id=typed.note_id,
-        text=chunk.embed_text,
-        memory_type=typed.memory_type.value if typed.memory_type else None,
-        agent=_str_or_none(note.get("agent")),
-        profile=_str_or_none(note.get("profile")),
-        scope=typed.scope,
-        status=_status_of(note),
-        confidence=_str_or_none(note.get("confidence")),
-        tags=tuple(note.tags),
-    )
-
-
-def _set_if(meta: dict[str, Any], key: str, value: Any) -> None:
-    text = _str_or_none(value)
-    if text is not None:
-        meta[key] = text
-
-
-def _str_or_none(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
+# The reindex itself is the Indexer's incremental pass (see step 5 in
+# `consolidate`): after decay/deprecation have written their frontmatter, the
+# mtime+hash diff re-embeds exactly the notes this cycle changed, and the state
+# fingerprint upgrades to a full rebuild when the deployment itself changed.
+# What remains here is the surface regeneration input below.
 def _active_scopes(
     accesses: Mapping[str, date], memory_by_id: Mapping[str, _Typed], manifest: Manifest
 ) -> Sequence[str] | None:
