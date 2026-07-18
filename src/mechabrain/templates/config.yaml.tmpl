@@ -83,6 +83,14 @@ frontmatter:
     agent: "$agent_ns"                # gera $agent_ns/<id>
   required_extra_tags: []      # tags que este deployment exige em toda nota de agente
 
+# ── Gate (§8.2) ───────────────────────────────────────────────────
+gate:
+  reject_on: []                # warnings do gate elevados a REJEIÇÃO neste deployment.
+                               # Único valor aceito: confidence_unverified — a condição
+                               # (confidence: high sem meta.evidence ao lado) é um fato
+                               # mecânico. "reusable" e "atomic" NÃO são eleváveis:
+                               # julgamento e heurística não viram enforcement (§8.2).
+
 # ── Retrieval ─────────────────────────────────────────────────────
 retrieval:
   embedding:
@@ -114,3 +122,6 @@ maintenance:
   decay_days: 90               # sem acesso há N dias → status: arquivado (nunca deletar)
   dedup_similarity: 0.92       # acima disso, candidato a fusão/supersedes NO MESMO escopo
   commit_prefix: "chore(ai-memory):"
+  proc_stale_days: 180         # PROC ativo sem teste há N dias (last_tested, senão created)
+                               # entra no RELATÓRIO da consolidação para reteste — nunca é
+                               # alterado (§9.4). 0 desliga.

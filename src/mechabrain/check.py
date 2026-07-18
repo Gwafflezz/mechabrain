@@ -26,6 +26,8 @@ an episodic note sits under the        R6.3 / §3
 the §3 skeleton is intact              §3
 ``Episodic/<agent>/`` exists for        R6.2 / §3
 every registered agent
+``schema.md`` and the ``AGENTS.md``     R6.4 / §10
+managed block match the manifest
 ``_meta/index/`` is gitignored and      §10
 ``_meta/links.jsonl`` is **not**
 notes stranded outside the contract    §3
@@ -80,6 +82,7 @@ from typing import Final
 from .contract import MARKDOWN_SUFFIX, MemoryType
 from .discovery import VaultPaths
 from .errors import MechabrainError, NoteNotFound, SchemaViolation
+from .generate import derived_docs_status
 from .manifest import Manifest, load_manifest
 from .note import Note
 
@@ -261,6 +264,7 @@ def check(
     problems: list[Problem] = []
     _check_contract_tree(paths, manifest, problems)
     _check_episodic_subfolders(paths, manifest, problems)
+    _check_derived_docs(paths, manifest, problems)
     _check_notes(paths, manifest, problems)
     _check_orphans(paths, problems)
     _check_gitignore(paths, git_ignored or _git_ignore_probe(paths.root), problems)
@@ -340,6 +344,46 @@ def _check_episodic_subfolders(
                     path=paths.relative(folder),
                 )
             )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Derived docs (§10, R6.4)
+# ══════════════════════════════════════════════════════════════════════
+def _check_derived_docs(paths: VaultPaths, manifest: Manifest, out: list[Problem]) -> None:
+    """`schema.md` and the `AGENTS.md` managed block must match the manifest.
+
+    Stale is a **warning**: the kernel still behaves correctly, but agents are
+    reading yesterday's boundaries -- the drift the generated docs exist to
+    prevent (R6.4, §10). Ambiguous `AGENTS.md` markers are an **error**: with a
+    lone or duplicated marker `mechabrain sync` refuses to touch the file, so
+    the deployment can no longer regenerate its own contract.
+    """
+    status = derived_docs_status(paths, manifest)
+    for name in status.stale_names:
+        out.append(
+            Problem(
+                check="schema_stale" if name.endswith("schema.md") else "agents_md_stale",
+                rule="R6.4" if name.endswith("schema.md") else "§10",
+                message=f"{name} does not match the current config.yaml — agents "
+                f"are reading stale rules",
+                severity=Severity.WARNING,
+                hint="run `mechabrain sync` to regenerate it",
+                path=name,
+            )
+        )
+    if status.agents_ambiguous:
+        out.append(
+            Problem(
+                check="agents_md_markers_ambiguous",
+                rule="§10",
+                message="AGENTS.md has ambiguous managed-block markers — "
+                "`mechabrain sync` cannot regenerate it without risking "
+                "hand-written text",
+                hint="keep exactly one begin/end marker pair; delete the extra "
+                "markers, or the whole block to have it regenerated",
+                path="AGENTS.md",
+            )
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════

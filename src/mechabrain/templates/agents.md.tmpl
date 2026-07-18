@@ -83,7 +83,7 @@ Antes de chamar `memory_write`, responda os sete itens. Metade deles o kernel ve
 | 6 | **Procedural: testado?** `PROC` exige o procedimento executado com sucesso ao menos uma vez, com a evidência citada no corpo. | kernel — **rejeita** sem `meta.evidence` |
 | 7 | **Limpo?** Sem chaves/tags das denylists (R6.1). | kernel — **rejeita** |
 
-Escrita cega de quase-duplicata é rejeitada. Escrever em memória procedural é a forma mais arriscada de learning: **um playbook ruim propaga erro para todos os agentes** — daí o item 6 ser mecânico.
+Escrita cega de quase-duplicata é rejeitada. Escrever em memória procedural é a forma mais arriscada de learning: **um playbook ruim propaga erro para todos os agentes** — daí o item 6 ser mecânico.$strict_note
 
 ### Item 6 na prática
 
@@ -111,7 +111,7 @@ As denylists existem porque a vault hospedeira tem automações e plugins própr
 
 ## 7. Manutenção (você não roda; você aproveita)
 
-`mechabrain consolidate` (§9) faz o mecânico: agrega acessos → `last_accessed`, arquiva o que não é lido há `$decay_days` dias (`status: arquivado` — **nunca deleta**, P8), deprecia `PROC` com sucessor, reconstrói o índice, regenera `hot.md`/`index.md`/`indices/` e commita com `$commit_prefix`.
+`mechabrain consolidate` (§9) faz o mecânico: agrega acessos → `last_accessed`, arquiva o que não é lido há `$decay_days` dias (`status: arquivado` — **nunca deleta**, P8), deprecia `PROC` com sucessor, reconstrói o índice, regenera `hot.md`/`index.md`/`indices/` e commita com `$commit_prefix`.$proc_stale_line
 
 O que ele **não** faz: fundir duplicatas. Fusão exige julgamento e o kernel não tem LLM — ele detecta e **relata** os candidatos (mesmo escopo, acima do limiar) e a fusão é feita por um agente via `memory_write` com `supersedes`, preservando detalhe (§9.2). Pares cross-scope similares vão para uma lista separada do relatório e **nunca** são fundidos.
 

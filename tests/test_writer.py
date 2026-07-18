@@ -257,6 +257,26 @@ class TestSemanticWrite:
         result = do_write("semantic", semantic_meta, manifest_ci, tmp_vault)
         assert Note.load(result.path).get("confidence") == "medium"  # type: ignore[arg-type]
 
+    def test_procedural_write_stamps_last_tested(
+        self, manifest_ci: Manifest, tmp_vault: VaultPaths
+    ) -> None:
+        """§8.2 item 6 evidence attests a run as of the write -- `last_tested:` records it."""
+        meta = {
+            "title": "Deploy playbook",
+            "agent": "beta",
+            "scope": "proj-a",
+            "source": "run-2026-07-17",
+            "evidence": "Executed on 2026-07-17, deploy OK.",
+        }
+        result = do_write("procedural", meta, manifest_ci, tmp_vault)
+        assert Note.load(result.path).get("last_tested") == STAMP  # type: ignore[arg-type]
+
+    def test_only_procedural_carries_last_tested(
+        self, manifest_ci: Manifest, tmp_vault: VaultPaths, semantic_meta: dict[str, Any]
+    ) -> None:
+        result = do_write("semantic", semantic_meta, manifest_ci, tmp_vault)
+        assert "last_tested" not in Note.load(result.path).frontmatter  # type: ignore[arg-type]
+
     def test_warnings_pass_through_on_success(
         self, manifest_ci: Manifest, tmp_vault: VaultPaths, semantic_meta: dict[str, Any]
     ) -> None:

@@ -72,3 +72,80 @@ def test_run_daemon_calls_the_real_serve(
 )
 def test_strip_wikilink_handles_alias_and_heading(text: str, expected: str) -> None:
     assert _strip_wikilink(text) == expected
+
+
+# ══════════════════════════════════════════════════════════════════════
+# memory.status warns before brute force stops being the right default
+# ══════════════════════════════════════════════════════════════════════
+class _CountingStore:
+    def __init__(self, count: int) -> None:
+        self._count = count
+
+    def count(self) -> int:
+        return self._count
+
+
+def _status_index(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_vault: VaultPaths,
+    manifest: Manifest,
+    chunks: int,
+) -> dict[str, Any]:
+    monkeypatch.setattr(
+        mcp_server_module, "store_from_manifest", lambda *a, **k: _CountingStore(chunks)
+    )
+    service = mcp_server_module.MemoryService(tmp_vault, manifest)
+    try:
+        return service.memory_status()["index"]
+    finally:
+        service.close()
+
+
+def test_status_warns_past_the_numpy_threshold(
+    monkeypatch: pytest.MonkeyPatch, tmp_vault: VaultPaths, manifest_ci: Manifest
+) -> None:
+    index = _status_index(
+        monkeypatch, tmp_vault, manifest_ci, mcp_server_module.NUMPY_CHUNKS_WARNING + 1
+    )
+    assert "warning" in index
+    assert "lancedb" in index["warning"]
+
+
+def test_status_is_quiet_below_the_numpy_threshold(
+    monkeypatch: pytest.MonkeyPatch, tmp_vault: VaultPaths, manifest_ci: Manifest
+) -> None:
+    index = _status_index(
+        monkeypatch, tmp_vault, manifest_ci, mcp_server_module.NUMPY_CHUNKS_WARNING
+    )
+    assert "warning" not in index
+
+
+# ══════════════════════════════════════════════════════════════════════
+# serve() warns on boot when the derived docs lag the manifest (§10)
+# ══════════════════════════════════════════════════════════════════════
+def test_boot_warns_when_derived_docs_are_stale(
+    tmp_vault: VaultPaths,
+    manifest_ci: Manifest,
+    manifest_data_ci: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import copy
+    import logging
+
+    drifted = copy.deepcopy(manifest_data_ci)
+    drifted["maintenance"] = {**(drifted.get("maintenance") or {}), "decay_days": 45}
+    stale_manifest = Manifest.from_mapping(drifted)
+
+    with caplog.at_level(logging.WARNING, logger="mechabrain.mcp_server"):
+        mcp_server_module._warn_on_stale_docs(tmp_vault, stale_manifest)
+    assert any("mechabrain sync" in record.getMessage() for record in caplog.records)
+
+
+def test_boot_is_quiet_when_derived_docs_match(
+    tmp_vault: VaultPaths, manifest_ci: Manifest, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="mechabrain.mcp_server"):
+        mcp_server_module._warn_on_stale_docs(tmp_vault, manifest_ci)
+    assert not caplog.records

@@ -51,7 +51,7 @@ def _vault(
 ) -> tuple[VaultPaths, Manifest]:
     """A disposable vault with tweaked maintenance/zones, plus its parsed manifest."""
     data = copy.deepcopy(dict(base))
-    for key in ("decay_days", "dedup_similarity"):
+    for key in ("decay_days", "dedup_similarity", "proc_stale_days"):
         if key in maintenance_and_zones:
             data["maintenance"][key] = maintenance_and_zones[key]
     if "read_only_index" in maintenance_and_zones:
@@ -101,6 +101,7 @@ def _proc(
     status: str = STATUS_ACTIVE,
     created: date = _OLD,
     last_accessed: date | None = None,
+    last_tested: date | None = None,
     supersedes: str | None = None,
 ) -> Note:
     frontmatter: dict[str, Any] = {
@@ -116,6 +117,8 @@ def _proc(
     }
     if last_accessed is not None:
         frontmatter["last_accessed"] = last_accessed
+    if last_tested is not None:
+        frontmatter["last_tested"] = last_tested
     if supersedes is not None:
         frontmatter["supersedes"] = supersedes
     return write_note(path, frontmatter, body)
@@ -424,6 +427,133 @@ def test_superseded_stale_procedural_deprecated_not_archived(
     assert Note.load(old.path).get("status") == STATUS_DEPRECATED
     assert len(report.deprecated) == 1
     assert all(d.note_id != old.note_id for d in report.decayed)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Step 4b -- report stale procedurals (§9.4)
+# ══════════════════════════════════════════════════════════════════════
+_RECENT = date(2026, 12, 30)
+
+
+def test_stale_procedural_is_reported_never_touched(
+    make_vault: Callable[..., VaultPaths],
+    write_note: Callable[..., Note],
+    manifest_data_ci: dict[str, Any],
+) -> None:
+    """Read often (no decay), tested long ago (stale): report it, change nothing."""
+    paths, manifest = _vault(make_vault, manifest_data_ci, proc_stale_days=180)
+    note = _proc(
+        write_note,
+        paths.procedural_dir / "PROC_aging.md",
+        "proj-a",
+        "Steps that may have rotted.",
+        last_accessed=_RECENT,
+        last_tested=_OLD,
+    )
+
+    report = consolidate(paths, manifest, today=_FUTURE)
+
+    assert Note.load(note.path).get("status") == STATUS_ACTIVE, "detect-and-report only"
+    assert len(report.stale_procedurals) == 1
+    stale = report.stale_procedurals[0]
+    assert stale.note_id == note.note_id
+    assert stale.last_tested == _OLD
+    assert stale.days_stale == (_FUTURE - _OLD).days
+    assert report.counts["stale_procedurals"] == 1
+
+
+def test_freshly_tested_procedural_is_not_stale(
+    make_vault: Callable[..., VaultPaths],
+    write_note: Callable[..., Note],
+    manifest_data_ci: dict[str, Any],
+) -> None:
+    paths, manifest = _vault(make_vault, manifest_data_ci, proc_stale_days=180)
+    _proc(
+        write_note,
+        paths.procedural_dir / "PROC_fresh.md",
+        "proj-a",
+        "Steps retested last month.",
+        last_accessed=_RECENT,
+        last_tested=date(2026, 12, 1),
+    )
+
+    report = consolidate(paths, manifest, today=_FUTURE)
+
+    assert report.stale_procedurals == ()
+
+
+def test_stale_falls_back_to_created_when_never_tested(
+    make_vault: Callable[..., VaultPaths],
+    write_note: Callable[..., Note],
+    manifest_data_ci: dict[str, Any],
+) -> None:
+    """A note predating `last_tested:` is aged by `created:` -- reading is not testing."""
+    paths, manifest = _vault(make_vault, manifest_data_ci, proc_stale_days=180)
+    note = _proc(
+        write_note,
+        paths.procedural_dir / "PROC_pre_field.md",
+        "proj-a",
+        "Steps from before the field existed.",
+        created=_OLD,
+        last_accessed=_RECENT,  # read often -- must not count as a test
+    )
+
+    report = consolidate(paths, manifest, today=_FUTURE)
+
+    assert len(report.stale_procedurals) == 1
+    assert report.stale_procedurals[0].last_tested is None
+
+
+def test_proc_stale_days_zero_disables_the_report(
+    make_vault: Callable[..., VaultPaths],
+    write_note: Callable[..., Note],
+    manifest_data_ci: dict[str, Any],
+) -> None:
+    paths, manifest = _vault(make_vault, manifest_data_ci, proc_stale_days=0)
+    _proc(
+        write_note,
+        paths.procedural_dir / "PROC_aging.md",
+        "proj-a",
+        "Old steps, but the report is off.",
+        last_accessed=_RECENT,
+        last_tested=_OLD,
+    )
+
+    report = consolidate(paths, manifest, today=_FUTURE)
+
+    assert report.stale_procedurals == ()
+    assert report.counts["stale_procedurals"] == 0
+
+
+def test_deprecated_this_cycle_is_not_also_stale(
+    make_vault: Callable[..., VaultPaths],
+    write_note: Callable[..., Note],
+    manifest_data_ci: dict[str, Any],
+) -> None:
+    """One report line per note: deprecado already says everything stale would."""
+    paths, manifest = _vault(make_vault, manifest_data_ci, proc_stale_days=180)
+    old = _proc(
+        write_note,
+        paths.procedural_dir / "PROC_old.md",
+        "proj-a",
+        "Old steps.",
+        last_accessed=_RECENT,
+        last_tested=_OLD,
+    )
+    _proc(
+        write_note,
+        paths.procedural_dir / "PROC_new.md",
+        "proj-a",
+        "New steps.",
+        supersedes=f"[[{old.note_id}]]",
+        last_accessed=_RECENT,
+        last_tested=_RECENT,
+    )
+
+    report = consolidate(paths, manifest, today=_FUTURE)
+
+    assert len(report.deprecated) == 1
+    assert all(s.note_id != old.note_id for s in report.stale_procedurals)
 
 
 # ══════════════════════════════════════════════════════════════════════

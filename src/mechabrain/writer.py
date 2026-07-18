@@ -414,6 +414,12 @@ def _frontmatter(
     frontmatter["source"] = _text(meta.get("source"))
     frontmatter["confidence"] = _confidence(meta)
     frontmatter["last_accessed"] = stamp
+    if memory_type is MemoryType.PROCEDURAL:
+        # §8.2 item 6 guaranteed `meta.evidence` before this point, and evidence
+        # attests a successful run as of this write -- so the write date is an
+        # honest `last_tested:`. The §9.4 stale-procedural report reads it; a
+        # human (or a superseding write) refreshes it after a re-test.
+        frontmatter["last_tested"] = stamp
     if supersedes_ids:
         frontmatter["supersedes"] = _supersedes_value(supersedes_ids)
     frontmatter["status"] = STATUS_ACTIVE

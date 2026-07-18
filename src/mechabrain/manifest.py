@@ -46,6 +46,7 @@ __all__ = [
     "ZonesSpec",
     "TagNamespaces",
     "FrontmatterSpec",
+    "GateSpec",
     "EmbeddingSpec",
     "HybridSpec",
     "LinkExpansionSpec",
@@ -55,6 +56,7 @@ __all__ = [
     "EMBEDDING_PROVIDERS",
     "VECTOR_STORES",
     "DEFAULT_PREFIXES",
+    "GATE_ELEVATABLE_CHECKS",
     "GLOBAL_SCOPE",
 ]
 
@@ -70,6 +72,14 @@ EMBEDDING_PROVIDERS: Final[frozenset[str]] = frozenset(
 #: Vector stores the kernel ships. `numpy` is the default: at personal-vault
 #: scale (~1e4 chunks) brute-force cosine is <10ms and ANN buys nothing.
 VECTOR_STORES: Final[frozenset[str]] = frozenset({"numpy", "lancedb", "sqlite-vec"})
+
+#: Gate warnings a deployment may elevate to rejections via `gate.reject_on`.
+#: Only `confidence_unverified` qualifies: whether `meta.evidence` accompanies a
+#: `confidence: high` claim is a mechanical fact (§8.2 item 4b). The other
+#: instructed items stay inelevatable by design -- "reusable" has no textual
+#: signal at all (elevating it would reject every write), and "atomic" fires on
+#: a heuristic, which must never masquerade as enforcement (§8.2).
+GATE_ELEVATABLE_CHECKS: Final[frozenset[str]] = frozenset({"confidence_unverified"})
 
 DEFAULT_PREFIXES: Final[dict[MemoryType, str]] = {
     MemoryType.EPISODIC: "MEM",
@@ -698,6 +708,43 @@ class FrontmatterSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class GateSpec:
+    """`gate:` -- optional strictness knobs for the §8.2 write gate.
+
+    ``reject_on`` elevates specific instructed *warnings* to *rejections*. Only
+    checks in :data:`GATE_ELEVATABLE_CHECKS` may be named -- the ones whose
+    condition is a mechanical fact, not a heuristic or a judgement. The default
+    (empty) preserves the honest-gate baseline: warnings never block.
+    """
+
+    reject_on: tuple[str, ...] = ()
+
+    @classmethod
+    def _parse(cls, data: Mapping[str, Any], path: str) -> "GateSpec":
+        _check_unknown_keys(data, ("reject_on",), path)
+        reject_on = _get_str_list(data, "reject_on", path)
+        _require_unique(reject_on, _join(path, "reject_on"), "check")
+        for i, check in enumerate(reject_on):
+            if check in GATE_ELEVATABLE_CHECKS:
+                continue
+            here = f"{_join(path, 'reject_on')}[{i}]"
+            near = difflib.get_close_matches(
+                check, sorted(GATE_ELEVATABLE_CHECKS), n=1, cutoff=0.6
+            )
+            raise _fail(
+                here,
+                f"check {check!r} cannot be elevated to a rejection",
+                f"did you mean {near[0]!r}?"
+                if near
+                else "elevatable checks: "
+                + ", ".join(sorted(GATE_ELEVATABLE_CHECKS))
+                + " -- 'reusable' and 'atomic' are judgement/heuristic items the "
+                "kernel must not pretend to enforce (§8.2)",
+            )
+        return cls(reject_on=tuple(reject_on))
+
+
+@dataclass(frozen=True, slots=True)
 class EmbeddingSpec:
     """`retrieval.embedding:`."""
 
@@ -814,15 +861,26 @@ class RetrievalSpec:
 
 @dataclass(frozen=True, slots=True)
 class MaintenanceSpec:
-    """`maintenance:` -- consolidation knobs (§9)."""
+    """`maintenance:` -- consolidation knobs (§9).
+
+    ``proc_stale_days`` drives the §9.4 stale-procedural *report*: an active
+    ``PROC`` whose last recorded test (``last_tested:``, falling back to
+    ``created:``) is older than this many days is listed for an agent to retest
+    -- detected and reported, never touched. ``0`` disables the report.
+    """
 
     decay_days: int = 90
     dedup_similarity: float = 0.92
     commit_prefix: str = "chore(ai-memory):"
+    proc_stale_days: int = 180
 
     @classmethod
     def _parse(cls, data: Mapping[str, Any], path: str) -> "MaintenanceSpec":
-        _check_unknown_keys(data, ("decay_days", "dedup_similarity", "commit_prefix"), path)
+        _check_unknown_keys(
+            data,
+            ("decay_days", "dedup_similarity", "commit_prefix", "proc_stale_days"),
+            path,
+        )
         return cls(
             decay_days=_get_int(data, "decay_days", path, 90, minimum=1),
             dedup_similarity=_get_float(
@@ -835,6 +893,7 @@ class MaintenanceSpec:
                 exclusive_min=True,
             ),
             commit_prefix=_get_str(data, "commit_prefix", path, default="chore(ai-memory):"),
+            proc_stale_days=_get_int(data, "proc_stale_days", path, 180, minimum=0),
         )
 
 
@@ -856,6 +915,7 @@ class Manifest:
     naming: NamingSpec = field(default_factory=NamingSpec)
     zones: ZonesSpec = field(default_factory=ZonesSpec)
     frontmatter: FrontmatterSpec = field(default_factory=FrontmatterSpec)
+    gate: GateSpec = field(default_factory=GateSpec)
     retrieval: RetrievalSpec = field(default_factory=RetrievalSpec)
     maintenance: MaintenanceSpec = field(default_factory=MaintenanceSpec)
     #: Where this manifest was read from, when it came from disk.
@@ -868,6 +928,7 @@ class Manifest:
         "naming",
         "zones",
         "frontmatter",
+        "gate",
         "retrieval",
         "maintenance",
     )
@@ -912,6 +973,7 @@ class Manifest:
             frontmatter=FrontmatterSpec._parse(
                 _section(root, "frontmatter", ""), "frontmatter"
             ),
+            gate=GateSpec._parse(_section(root, "gate", ""), "gate"),
             retrieval=RetrievalSpec._parse(_section(root, "retrieval", ""), "retrieval"),
             maintenance=MaintenanceSpec._parse(
                 _section(root, "maintenance", ""), "maintenance"

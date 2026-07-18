@@ -32,7 +32,11 @@ Step    What this module does
         names it through ``supersedes`` becomes ``status: deprecado``,
         linked to the successor. The "contradicted by a more recent run"
         case is judgement and cannot be detected here -- see the module
-        note on what is *not* covered.
+        note on what is *not* covered. What *is* mechanical about ageing
+        playbooks is the calendar: an active ``PROC`` untested for
+        ``proc_stale_days`` (by ``last_tested:``, else ``created:``) is
+        **listed** as stale for an agent to retest -- reported, never
+        touched.
 5       **Rebuild** (§9.5, R8.1). *Incremental* reindex (vectors + BM25)
         through :class:`~mechabrain.index.indexer.Indexer` -- only the
         notes this cycle touched (decayed, deprecated, stamped) or a human
@@ -101,6 +105,7 @@ __all__ = [
     "SimilarPair",
     "DecayedNote",
     "DeprecatedProcedural",
+    "StaleProcedural",
     "CONSOLIDATION_REPORT_FILE",
 ]
 
@@ -182,6 +187,31 @@ class DeprecatedProcedural:
 
 
 @dataclass(frozen=True, slots=True)
+class StaleProcedural:
+    """An active ``PROC`` whose last recorded test is older than
+    ``maintenance.proc_stale_days`` (§9.4).
+
+    Reported, never touched: whether the playbook still works is judgement, so
+    the cycle lists it for an agent to retest -- exactly the detect-and-report
+    split of §9.2. ``last_tested`` is ``None`` when the note predates the field
+    and the age was measured from ``created:`` instead.
+    """
+
+    note_id: str
+    scope: str
+    last_tested: date | None
+    days_stale: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "note": wikilink_for(self.note_id),
+            "scope": self.scope,
+            "last_tested": self.last_tested.isoformat() if self.last_tested else None,
+            "days_stale": self.days_stale,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ConsolidationReport:
     """The result of one :func:`consolidate` cycle -- counts plus the judgement
     items an agent must act on.
@@ -199,6 +229,7 @@ class ConsolidationReport:
     cross_scope_similar: tuple[SimilarPair, ...] = ()
     decayed: tuple[DecayedNote, ...] = ()
     deprecated: tuple[DeprecatedProcedural, ...] = ()
+    stale_procedurals: tuple[StaleProcedural, ...] = ()
     committed: bool = False
     commit: str | None = None
 
@@ -211,6 +242,7 @@ class ConsolidationReport:
             "cross_scope_similar": [p.as_dict() for p in self.cross_scope_similar],
             "decayed": [d.as_dict() for d in self.decayed],
             "deprecated": [d.as_dict() for d in self.deprecated],
+            "stale_procedurals": [s.as_dict() for s in self.stale_procedurals],
             "committed": self.committed,
             "commit": self.commit,
         }
@@ -299,6 +331,14 @@ def consolidate(
         # 4 -- deprecate procedural (§9.4)
         deprecated = _deprecate(deprecatable, memory_by_id, dry_run, changed)
 
+        # 4b -- report stale procedurals (§9.4): detect and report, never touch.
+        stale_procedurals = _stale_procedurals(
+            memory_notes,
+            reference,
+            manifest,
+            excluded={*deprecatable, *(d.note_id for d in decayed)},
+        )
+
         # 5 -- rebuild (§9.5, R8.1): incremental reindex + regenerate surfaces.
         # Steps 1, 3 and 4 already wrote their frontmatter to disk (note.write()
         # is where each stamp lands), so the mtime+hash diff sees exactly the
@@ -331,6 +371,7 @@ def consolidate(
         "cross_scope_similar": len(cross_scope),
         "decayed": len(decayed),
         "deprecated": len(deprecated),
+        "stale_procedurals": len(stale_procedurals),
         "notes_reindexed": notes_reindexed,
         "chunks_indexed": chunk_count,
     }
@@ -342,6 +383,7 @@ def consolidate(
         cross_scope_similar=tuple(cross_scope),
         decayed=tuple(decayed),
         deprecated=tuple(deprecated),
+        stale_procedurals=tuple(stale_procedurals),
         committed=committed,
         commit=sha,
     )
@@ -694,6 +736,57 @@ def _deprecate(
             DeprecatedProcedural(note_id=old_id, successors=tuple(successors))
         )
     return deprecated
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Step 4b -- report stale procedurals (§9.4)
+# ══════════════════════════════════════════════════════════════════════
+def _stale_procedurals(
+    memory: Sequence[_Typed],
+    today: date,
+    manifest: Manifest,
+    excluded: set[str],
+) -> list[StaleProcedural]:
+    """List active ``PROC`` notes whose last recorded test is older than
+    ``maintenance.proc_stale_days`` (§9.4). Detect and report -- never touch.
+
+    Age is measured from ``last_tested:`` (stamped by the writer on every
+    procedural write, since §8.2 item 6 evidence attests a run at that date),
+    falling back to ``created:`` for a note that predates the field. Never
+    ``last_accessed``/``modified``: reading a playbook is not testing it. A note
+    with neither date is left alone -- flagging without evidence of age would be
+    a guess, the same principle as decay. ``excluded`` carries the ids this
+    cycle already deprecated or decayed: their status changed, and a second
+    report line would only shout over the first.
+    """
+    stale_days = manifest.maintenance.proc_stale_days
+    if stale_days <= 0:
+        return []
+    stale: list[StaleProcedural] = []
+    for typed in memory:
+        if (
+            typed.memory_type is not MemoryType.PROCEDURAL
+            or typed.note_id in excluded
+            or _status_of(typed.note) != STATUS_ACTIVE
+        ):
+            continue
+        last_tested = _as_date(typed.note.get("last_tested"))
+        reference = last_tested or _as_date(typed.note.get("created"))
+        if reference is None:
+            continue
+        days = (today - reference).days
+        if days <= stale_days:
+            continue
+        stale.append(
+            StaleProcedural(
+                note_id=typed.note_id,
+                scope=typed.scope,
+                last_tested=last_tested,
+                days_stale=days,
+            )
+        )
+    stale.sort(key=lambda s: (-s.days_stale, s.note_id))
+    return stale
 
 
 # ══════════════════════════════════════════════════════════════════════

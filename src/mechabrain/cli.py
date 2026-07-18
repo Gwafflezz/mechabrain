@@ -633,6 +633,9 @@ def _render_consolidation_report(report: Any) -> str:
     lines.append(
         f"  cross-scope similar (never merged): {counts.get('cross_scope_similar', 0)}"
     )
+    lines.append(
+        f"  stale procedurals (retest suggested): {counts.get('stale_procedurals', 0)}"
+    )
     lines.append(f"  chunks indexed: {counts.get('chunks_indexed', 0)}")
     if report.committed:
         lines.append(f"  committed: {report.commit}")
@@ -644,6 +647,18 @@ def _render_consolidation_report(report: Any) -> str:
             lines.append(
                 f"    - [[{pair.a}]] ~ [[{pair.b}]]  "
                 f"({pair.similarity:.2f}, {pair.memory_type}, scope {pair.scope_a})"
+            )
+    if report.stale_procedurals:
+        lines.append("  retest these stale procedurals (an agent runs and refreshes them):")
+        for stale in report.stale_procedurals:
+            tested = (
+                f"last tested {stale.last_tested.isoformat()}"
+                if stale.last_tested
+                else "never tested since creation"
+            )
+            lines.append(
+                f"    - [[{stale.note_id}]]  ({tested}, {stale.days_stale} days, "
+                f"scope {stale.scope})"
             )
     return "\n".join(lines)
 

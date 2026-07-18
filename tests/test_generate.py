@@ -766,3 +766,98 @@ def test_schema_table_cells_escape_pipes(manifest_ci: Manifest) -> None:
     assert "low \\| medium \\| high" in table_rows[0], table_rows[0]
     status_rows = [line for line in text.splitlines() if line.startswith("| `status`")]
     assert status_rows and "\\|" in status_rows[0], status_rows
+
+
+# ══════════════════════════════════════════════════════════════════════
+# gate.reject_on and proc_stale_days surface in the generated docs
+# ══════════════════════════════════════════════════════════════════════
+def _with(manifest_data_ci: dict, **overrides: object) -> Manifest:
+    import copy
+
+    data = copy.deepcopy(manifest_data_ci)
+    for dotted, value in overrides.items():
+        section, key = dotted.split("__", 1)
+        data.setdefault(section, {})[key] = value
+    return Manifest.from_mapping(data)
+
+
+def test_agents_md_stays_silent_without_reject_on(manifest_ci: Manifest) -> None:
+    from mechabrain.generate import render_managed_block
+
+    assert "Estrito neste deployment" not in render_managed_block(manifest_ci)
+
+
+def test_agents_md_calls_out_an_elevated_check(manifest_data_ci: dict) -> None:
+    from mechabrain.generate import render_managed_block
+
+    manifest = _with(manifest_data_ci, gate__reject_on=["confidence_unverified"])
+    block = render_managed_block(manifest)
+    assert "Estrito neste deployment" in block
+    assert "confidence_unverified" in block
+
+
+def test_schema_and_agents_document_the_stale_report(manifest_ci: Manifest) -> None:
+    from mechabrain.generate import render_managed_block, render_schema
+
+    days = str(manifest_ci.maintenance.proc_stale_days)
+    assert f"`{days}` dias" in render_schema(manifest_ci)
+    assert f"`{days}` dias" in render_managed_block(manifest_ci)
+    assert "last_tested" in render_schema(manifest_ci)
+
+
+def test_disabled_stale_report_is_not_documented(manifest_data_ci: dict) -> None:
+    from mechabrain.generate import render_managed_block, render_schema
+
+    manifest = _with(manifest_data_ci, maintenance__proc_stale_days=0)
+    assert "relatório** da consolidação" not in render_schema(manifest)
+    assert "relatório** da consolidação" not in render_managed_block(manifest)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# derived_docs_status -- the §10 drift detector
+# ══════════════════════════════════════════════════════════════════════
+def test_derived_docs_in_sync_report_nothing(
+    tmp_vault: VaultPaths, manifest_ci: Manifest
+) -> None:
+    from mechabrain.generate import derived_docs_status
+
+    status = derived_docs_status(tmp_vault, manifest_ci)
+    assert not status.any_stale
+    assert not status.agents_ambiguous
+    assert status.stale_names == ()
+
+
+def test_derived_docs_stale_against_an_edited_manifest(
+    tmp_vault: VaultPaths, manifest_data_ci: dict
+) -> None:
+    from mechabrain.generate import derived_docs_status
+
+    edited = _with(manifest_data_ci, maintenance__decay_days=45)
+    status = derived_docs_status(tmp_vault, edited)
+    assert status.schema_stale
+    assert status.agents_stale
+    assert status.stale_names == ("_meta/schema.md", "AGENTS.md")
+
+
+def test_derived_docs_missing_read_as_stale(
+    tmp_vault: VaultPaths, manifest_ci: Manifest
+) -> None:
+    from mechabrain.generate import derived_docs_status
+
+    tmp_vault.schema_file.unlink()
+    tmp_vault.agents_file.unlink()
+    status = derived_docs_status(tmp_vault, manifest_ci)
+    assert status.schema_stale and status.agents_stale
+
+
+def test_derived_docs_flag_ambiguous_markers(
+    tmp_vault: VaultPaths, manifest_ci: Manifest
+) -> None:
+    from mechabrain.generate import derived_docs_status
+    from mechabrain.note import write_atomic
+
+    text = tmp_vault.agents_file.read_text(encoding="utf-8")
+    write_atomic(tmp_vault.agents_file, text + "\n<!-- mechabrain:begin -->\n")
+    status = derived_docs_status(tmp_vault, manifest_ci)
+    assert status.agents_ambiguous
+    assert not status.agents_stale

@@ -135,6 +135,12 @@ TRANSPORTS: Final[tuple[str, ...]] = ("sse", "streamable-http", "stdio")
 #: context, not a duplicate (§8.2 item 2).
 _DEDUP_HOPS: Final[int] = 0
 
+#: Chunk count past which `memory_status` warns about the numpy store. Brute
+#: force is the right default at personal-vault scale, but its cost is linear:
+#: at ~50k chunks (1024-dim float32 ≈ 200MB matrix) a search is tens of
+#: milliseconds and growing -- time to consider `lancedb`/`sqlite-vec`.
+NUMPY_CHUNKS_WARNING: Final[int] = 50_000
+
 
 # ══════════════════════════════════════════════════════════════════════
 # Service
@@ -524,10 +530,22 @@ class MemoryService:
         except MechabrainError as exc:
             logger.warning("cannot read the vector store for memory_status: %s", exc)
             chunks = None
-        return {
+        health: dict[str, Any] = {
             "chunks": chunks,
             "built": chunks is not None and chunks > 0,
         }
+        if (
+            self.manifest.retrieval.store == "numpy"
+            and chunks is not None
+            and chunks > NUMPY_CHUNKS_WARNING
+        ):
+            health["warning"] = (
+                f"the numpy store holds {chunks} chunks (> {NUMPY_CHUNKS_WARNING}): "
+                f"brute-force search cost grows linearly with the corpus -- "
+                f"consider retrieval.store: lancedb or sqlite-vec (each behind "
+                f"its extra)"
+            )
+        return health
 
     def _last_consolidation(self) -> str | None:
         """The ``generated`` timestamp of the latest maintenance report (§9), or ``None``."""
@@ -674,6 +692,7 @@ def serve(
         )
     paths = discover_vault(vault, env=env).require_initialized()
     manifest = load_manifest(paths.config_file)
+    _warn_on_stale_docs(paths, manifest)
     resolved_host = resolve_host(host, env)
     resolved_port = resolve_port(port, env)
 
@@ -695,6 +714,30 @@ def serve(
             server.run(transport=transport)  # type: ignore[arg-type]
     finally:
         service.close()
+
+
+def _warn_on_stale_docs(paths: VaultPaths, manifest: Manifest) -> None:
+    """Log a boot-time warning when `AGENTS.md`/`schema.md` lag the manifest (§10).
+
+    The daemon serves the manifest's rules whatever the docs say; what drifts is
+    what the *agents read*. A warning -- never a refusal: a stale doc must not
+    take the memory offline, and `mechabrain check` reports the same finding for
+    CI to catch.
+    """
+    from .generate import derived_docs_status  # noqa: PLC0415 -- serve-only concern
+
+    status = derived_docs_status(paths, manifest)
+    if status.any_stale:
+        logger.warning(
+            "%s do not match config.yaml -- agents are reading stale rules; "
+            "run `mechabrain sync`",
+            " and ".join(status.stale_names),
+        )
+    if status.agents_ambiguous:
+        logger.warning(
+            "AGENTS.md has ambiguous managed-block markers -- `mechabrain sync` "
+            "cannot regenerate it; keep exactly one begin/end pair"
+        )
 
 
 def resolve_host(host: str | None = None, env: Mapping[str, str] | None = None) -> str:

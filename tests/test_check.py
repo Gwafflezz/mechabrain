@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from mechabrain.check import (
     CheckReport,
@@ -104,6 +105,55 @@ def test_empty_vault_passes(tmp_vault: VaultPaths) -> None:
     report = check(tmp_vault, git_ignored=good_git(tmp_vault))
     assert report.ok
     assert report.problems == ()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Derived docs (§10, R6.4)
+# ══════════════════════════════════════════════════════════════════════
+def _edit_config(paths: VaultPaths) -> None:
+    """A valid config edit (decay_days) made without running `mechabrain sync`."""
+    data = yaml.safe_load(paths.config_file.read_text(encoding="utf-8"))
+    data["maintenance"] = {**(data.get("maintenance") or {}), "decay_days": 45}
+    write_atomic(paths.config_file, yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+
+
+def test_edited_config_marks_derived_docs_stale(tmp_vault: VaultPaths) -> None:
+    """The §10 drift: config.yaml changed, sync not run -- agents read old rules."""
+    _edit_config(tmp_vault)
+    report = check(tmp_vault, git_ignored=good_git(tmp_vault))
+
+    assert report.ok, "stale docs are a warning, not a failed build"
+    assert only(report, "schema_stale").severity is Severity.WARNING
+    stale = only(report, "agents_md_stale")
+    assert stale.severity is Severity.WARNING
+    assert stale.hint is not None and "sync" in stale.hint
+
+
+def test_missing_schema_reads_as_stale(tmp_vault: VaultPaths) -> None:
+    tmp_vault.schema_file.unlink()
+    report = check(tmp_vault, git_ignored=good_git(tmp_vault))
+    assert "schema_stale" in check_ids(report)
+    assert "agents_md_stale" not in check_ids(report)
+
+
+def test_ambiguous_agents_markers_are_an_error(tmp_vault: VaultPaths) -> None:
+    """A duplicated marker breaks `mechabrain sync` itself -- that fails the build."""
+    agents = tmp_vault.agents_file.read_text(encoding="utf-8")
+    write_atomic(tmp_vault.agents_file, agents + "\n<!-- mechabrain:begin -->\n")
+    report = check(tmp_vault, git_ignored=good_git(tmp_vault))
+
+    assert not report.ok
+    problem = only(report, "agents_md_markers_ambiguous")
+    assert problem.severity is Severity.ERROR
+    assert "agents_md_stale" not in check_ids(report), "ambiguity precludes a staleness verdict"
+
+
+def test_hand_written_sections_do_not_read_as_drift(tmp_vault: VaultPaths) -> None:
+    """§10: the kernel owns the block and nothing else -- a human section is not stale."""
+    agents = tmp_vault.agents_file.read_text(encoding="utf-8")
+    write_atomic(tmp_vault.agents_file, agents + "\n## Minha seção\n\nTexto humano.\n")
+    report = check(tmp_vault, git_ignored=good_git(tmp_vault))
+    assert "agents_md_stale" not in check_ids(report)
 
 
 def test_ok_ignores_warnings(tmp_vault: VaultPaths) -> None:

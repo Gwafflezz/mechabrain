@@ -137,10 +137,15 @@ def test_state_lands_only_in_the_index_dir(store: NumpyStore, tmp_vault: VaultPa
     fill(store)
     assert (tmp_vault.index_dir / VECTORS_FILE).is_file()
     assert (tmp_vault.index_dir / METAS_FILE).is_file()
+    # Deployment artifacts the fixture generates, like the real `init` (§10) --
+    # not index state.
+    deployment_files = {tmp_vault.config_file, tmp_vault.agents_file, tmp_vault.schema_file}
     outside = [
         path
         for path in tmp_vault.mecha_brain.rglob("*")
-        if path.is_file() and tmp_vault.index_dir not in path.parents and path != tmp_vault.config_file
+        if path.is_file()
+        and tmp_vault.index_dir not in path.parents
+        and path not in deployment_files
     ]
     assert outside == []
 

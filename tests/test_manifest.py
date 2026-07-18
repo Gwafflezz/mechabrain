@@ -47,6 +47,8 @@ def test_min_manifest_applies_spec_defaults(manifest_min: Manifest) -> None:
     assert manifest_min.maintenance.decay_days == 90
     assert manifest_min.maintenance.dedup_similarity == 0.92
     assert manifest_min.maintenance.commit_prefix == "chore(ai-memory):"
+    assert manifest_min.maintenance.proc_stale_days == 180
+    assert manifest_min.gate.reject_on == ()
 
 
 def test_full_manifest_reads_every_key_rather_than_defaulting(manifest_full: Manifest) -> None:
@@ -73,6 +75,8 @@ def test_full_manifest_reads_every_key_rather_than_defaulting(manifest_full: Man
     assert manifest_full.retrieval.store == "lancedb"
     assert manifest_full.maintenance.decay_days == 30
     assert manifest_full.maintenance.dedup_similarity == 0.85
+    assert manifest_full.maintenance.proc_stale_days == 60
+    assert manifest_full.gate.reject_on == ("confidence_unverified",)
 
 
 # ── R5.1: strict keys ───────────────────────────────────────────────
@@ -266,6 +270,46 @@ def test_decay_days_must_be_positive(manifest_data_ci: dict[str, Any]) -> None:
     manifest_data_ci["maintenance"]["decay_days"] = 0
     error = expect_error(manifest_data_ci)
     assert "decay_days" in error.message
+
+
+# ── gate: (§8.2 opt-in strictness) ─────────────────────────────────
+def test_reject_on_accepts_the_elevatable_check(manifest_data_ci: dict[str, Any]) -> None:
+    manifest_data_ci["gate"] = {"reject_on": ["confidence_unverified"]}
+    manifest = parse(manifest_data_ci)
+    assert manifest.gate.reject_on == ("confidence_unverified",)
+
+
+def test_reject_on_refuses_a_judgement_check(manifest_data_ci: dict[str, Any]) -> None:
+    """`reusable`/`atomic` must never be elevated: the hint explains why (§8.2)."""
+    manifest_data_ci["gate"] = {"reject_on": ["atomic"]}
+    error = expect_error(manifest_data_ci)
+    assert "gate.reject_on[0]" in error.message
+    assert "atomic" in error.message
+    assert error.hint is not None and "confidence_unverified" in error.hint
+
+
+def test_reject_on_suggests_the_intended_spelling(manifest_data_ci: dict[str, Any]) -> None:
+    manifest_data_ci["gate"] = {"reject_on": ["confidence_unverifed"]}
+    error = expect_error(manifest_data_ci)
+    assert error.hint is not None and "confidence_unverified" in error.hint
+
+
+def test_unknown_gate_key_is_rejected(manifest_data_ci: dict[str, Any]) -> None:
+    manifest_data_ci["gate"] = {"strict_mode": True}
+    error = expect_error(manifest_data_ci)
+    assert "gate.strict_mode" in error.message
+
+
+def test_proc_stale_days_zero_disables(manifest_data_ci: dict[str, Any]) -> None:
+    manifest_data_ci["maintenance"]["proc_stale_days"] = 0
+    manifest = parse(manifest_data_ci)
+    assert manifest.maintenance.proc_stale_days == 0
+
+
+def test_proc_stale_days_rejects_a_negative(manifest_data_ci: dict[str, Any]) -> None:
+    manifest_data_ci["maintenance"]["proc_stale_days"] = -1
+    error = expect_error(manifest_data_ci)
+    assert "proc_stale_days" in error.message
 
 
 def test_boolean_is_not_accepted_as_integer(manifest_data_ci: dict[str, Any]) -> None:

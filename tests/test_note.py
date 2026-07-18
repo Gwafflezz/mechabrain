@@ -334,6 +334,10 @@ def test_iter_notes_walks_recursively_in_sorted_order(
     tmp_vault: VaultPaths, sample_notes: list[Note]
 ) -> None:
     found = scan_notes(tmp_vault.mecha_brain)
+    # The fixture also generates AGENTS.md/schema.md, like the real `init` --
+    # drop them so the assertion stays about the sample notes' walk order.
+    generated = {tmp_vault.agents_file, tmp_vault.schema_file}
+    found = [n for n in found if n.path not in generated]
     assert [n.note_id for n in found] == [n.note_id for n in sample_notes]
 
 

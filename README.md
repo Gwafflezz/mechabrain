@@ -143,7 +143,10 @@ duplicata no mesmo escopo, `source:` preenchido, escopo válido, procedural com 
 Os outros dois — *"isto é reutilizável?"* e *"isto é atômico?"* — são julgamento, e código não
 policia julgamento. Eles estão instruídos no `AGENTS.md` e voltam como **warnings**, nunca como
 rejeição. Não fingimos enforcement com um booleano que o agente sempre marca `true`: um gate que
-mente é pior que um gate ausente.
+mente é pior que um gate ausente. A única exceção é opt-in e mecânica: `gate.reject_on:
+[confidence_unverified]` no manifest eleva a rejeição o caso "`confidence: high` sem
+`meta.evidence` ao lado" — a *condição* é um fato checável, mesmo que "a fonte é primária?" não
+seja. `reusable` e `atomic` não são eleváveis, por design.
 
 **A fusão de duplicatas não é automática.** O `consolidate` executa os passos mecânicos (flush de
 acessos, decay, deprecação de procedural com sucessor, rebuild, commit). Mas *fundir* duas memórias

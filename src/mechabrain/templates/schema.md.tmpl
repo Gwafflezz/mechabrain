@@ -18,6 +18,7 @@ scope: <slug | global>         # projeto ao qual a memória pertence (R6.5)
 source: "<sessão/execução/ponte de origem>"  # rastreabilidade (P7)
 confidence: $confidence_values
 last_accessed: YYYY-MM-DD      # atualizado pelo consolidador (R7.3)
+last_tested: YYYY-MM-DD        # só procedural — carimbado na escrita (§8.2 item 6); atualize ao retestar
 supersedes: "[[...]]"          # opcional — memória que esta substitui
 status: $status_values   # deprecado só para procedural
 ---
@@ -37,6 +38,7 @@ status: $status_values   # deprecado só para procedural
 | `source` | sim | texto livre | P7 / §8.2 item 4 |
 | `confidence` | sim | $confidence_values_cell | `high` só com verificação ou fonte primária |
 | `last_accessed` | não | `YYYY-MM-DD` | escrito pelo consolidador, não pelo agente (R7.3) |
+| `last_tested` | não (só `procedural`) | `YYYY-MM-DD` | carimbado pelo kernel na escrita (a evidência atesta uma execução); atualizado por quem retesta (§9.4) |
 | `supersedes` | não | `"[[wikilink]]"` | a memória que esta substitui |
 | `status` | sim | $status_values_cell | `deprecado` só para `procedural` (§9.4) |
 
@@ -84,5 +86,5 @@ $naming_rows
 
 - **R6.3** Notas em `Episodic/` nunca são editadas depois de criadas (append-only). Correção = nota nova com `supersedes`.
 - **§9.3** Sem acesso há `$decay_days` dias → `status: arquivado`. Nunca deletar (P8): arquivadas saem do `index.md` e perdem peso no retrieval, mas continuam buscáveis com filtro explícito.
-- **§9.4** `PROC` contradito por execução mais recente ou substituído → `status: deprecado`, com link para o sucessor.
+- **§9.4** `PROC` contradito por execução mais recente ou substituído → `status: deprecado`, com link para o sucessor.$proc_stale_sentence
 - **§9.2** Similaridade acima de `$dedup_similarity` no mesmo escopo → candidato a fusão. A fusão **preserva detalhe** (nunca super-resume) e é decisão de agente, não do kernel: o consolidador apenas detecta e relata os candidatos.

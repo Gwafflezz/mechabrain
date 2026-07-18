@@ -51,6 +51,8 @@ import pytest
 import yaml
 
 from mechabrain.discovery import VAULT_ENV_VAR, VaultPaths
+from mechabrain.errors import MechabrainError
+from mechabrain.generate import write_agents_md, write_schema
 from mechabrain.manifest import Manifest
 from mechabrain.note import Note, write_atomic
 
@@ -183,6 +185,7 @@ def manifest_data_full() -> dict[str, Any]:
             "tag_namespaces": {"memory": "memory", "agent": "author"},
             "required_extra_tags": ["source/ai"],
         },
+        "gate": {"reject_on": ["confidence_unverified"]},
         "retrieval": {
             "embedding": {"provider": "http", "model": "custom-model"},
             "hybrid": {"vector_weight": 0.75, "bm25_weight": 0.25},
@@ -195,6 +198,7 @@ def manifest_data_full() -> dict[str, Any]:
             "decay_days": 30,
             "dedup_similarity": 0.85,
             "commit_prefix": "chore(memory):",
+            "proc_stale_days": 60,
         },
     }
 
@@ -226,8 +230,11 @@ def init_skeleton(root: Path, manifest_data: Mapping[str, Any]) -> VaultPaths:
     The test-side equivalent of ``mechabrain init``: it deliberately does *not*
     call the CLI, so that these fixtures stay usable while `init` is being
     written and a bug there cannot silently break every other module's tests.
-    Creates directories and the manifest only -- no ``AGENTS.md``/``schema.md``,
-    since those are generated artifacts and their generator owns their tests.
+    Like the real ``init``, it also generates ``AGENTS.md``/``schema.md`` when
+    the manifest parses -- ``check`` verifies the derived docs match the config
+    (§10), so a fixture vault without them would read as drifted. A manifest
+    that does *not* parse (a fixture testing a bad config) skips the docs, since
+    the generators need a valid :class:`Manifest`.
     """
     paths = VaultPaths.for_root(root)
     for directory in paths.contract_dirs():
@@ -238,6 +245,12 @@ def init_skeleton(root: Path, manifest_data: Mapping[str, Any]) -> VaultPaths:
         paths.config_file,
         yaml.safe_dump(dict(manifest_data), sort_keys=False, allow_unicode=True),
     )
+    try:
+        manifest = Manifest.from_mapping(manifest_data)
+    except MechabrainError:
+        return paths
+    write_schema(paths, manifest)
+    write_agents_md(paths, manifest)
     return paths
 
 

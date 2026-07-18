@@ -500,6 +500,59 @@ def test_medium_confidence_does_not_warn(gate: Callable[..., GateResult]) -> Non
 
 
 # ══════════════════════════════════════════════════════════════════════
+# gate.reject_on -- opt-in elevation of the one mechanical warning
+# ══════════════════════════════════════════════════════════════════════
+@pytest.fixture
+def strict_manifest(manifest_data_ci: dict[str, Any]) -> Manifest:
+    """`manifest_ci` with `confidence_unverified` elevated to a rejection."""
+    data = copy.deepcopy(manifest_data_ci)
+    data["gate"] = {"reject_on": ["confidence_unverified"]}
+    return Manifest.from_mapping(data)
+
+
+def test_reject_on_elevates_unverified_high_confidence(
+    gate: Callable[..., GateResult], meta: dict[str, Any], strict_manifest: Manifest
+) -> None:
+    result = gate(meta={**meta, "confidence": "high"}, manifest=strict_manifest)
+    assert not result.approved
+    assert "confidence_unverified" in checks(result)
+    assert "confidence_unverified" not in warned(result), (
+        "an elevated finding must not be reported twice"
+    )
+
+
+def test_elevation_spares_a_verified_high(
+    gate: Callable[..., GateResult], meta: dict[str, Any], strict_manifest: Manifest
+) -> None:
+    verified = {**meta, "confidence": "high", "evidence": "Reproduced the benchmark."}
+    result = gate(meta=verified, manifest=strict_manifest)
+    assert result.approved
+    assert "confidence_unverified" not in checks(result)
+
+
+def test_elevation_leaves_judgement_warnings_alone(
+    gate: Callable[..., GateResult], meta: dict[str, Any], strict_manifest: Manifest
+) -> None:
+    """Only the named check moves; `reusable`/`atomic` stay the author's call."""
+    long_body = "One idea, told at length. " * 400
+    result = gate(
+        meta={**meta, "confidence": "high"}, body=long_body, manifest=strict_manifest
+    )
+    assert "confidence_unverified" in checks(result)
+    assert "reusable" in warned(result)
+    assert "atomic" in warned(result)
+
+
+def test_default_manifest_never_elevates(
+    gate: Callable[..., GateResult], meta: dict[str, Any]
+) -> None:
+    """The baseline stays honest: with no `gate.reject_on`, warnings never block."""
+    result = gate(meta={**meta, "confidence": "high"})
+    assert result.approved
+    assert "confidence_unverified" in warned(result)
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Routing (§8.1) -- who faces the checklist
 # ══════════════════════════════════════════════════════════════════════
 def test_the_full_checklist_covers_exactly_semantic_and_procedural() -> None:

@@ -45,6 +45,16 @@ cannot decide them:
 Enforcing a judgement item would mean trusting a self-report, which is not
 enforcement -- it is a boolean the agent sets to `true` to get past the gate.
 
+One opt-in exception: item 4b's *condition* -- a `confidence: high` claim with
+no `meta.evidence` beside it -- IS a mechanical fact, even though "is the source
+primary" is not. A deployment that wants it enforced lists the check in the
+manifest's `gate.reject_on`, and :func:`evaluate` moves that warning into the
+rejections. Only checks in
+:data:`~mechabrain.manifest.GATE_ELEVATABLE_CHECKS` may be elevated; `reusable`
+and `atomic` stay warnings whatever the manifest says, because elevating a
+judgement or a heuristic would be exactly the fake enforcement this module
+refuses.
+
 Routing (§8.1)
 ==============
 
@@ -331,6 +341,14 @@ def evaluate(
                 memory_type, meta, body, manifest, search_fn, rejections
             )
         warnings.extend(_instructed_warnings(meta, body))
+        # Opt-in elevation (`gate.reject_on`): the manifest validated the list
+        # against GATE_ELEVATABLE_CHECKS, so anything matched here is a check
+        # whose condition is mechanical -- move it from warning to rejection.
+        if manifest.gate.reject_on:
+            elevated = [w for w in warnings if w.check in manifest.gate.reject_on]
+            if elevated:
+                warnings = [w for w in warnings if w.check not in manifest.gate.reject_on]
+                rejections.extend(elevated)
 
     return GateResult(
         approved=not rejections,

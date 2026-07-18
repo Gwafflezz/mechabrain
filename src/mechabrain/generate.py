@@ -68,6 +68,8 @@ __all__ = [
     "render_managed_block",
     "merge_managed_block",
     "render_agents_md",
+    "derived_docs_status",
+    "DerivedDocsStatus",
     "render_index",
     "render_hot",
     "render_initial_index",
@@ -308,6 +310,23 @@ def render_schema(manifest: Manifest) -> str:
         naming_rows=_naming_rows(manifest),
         decay_days=manifest.maintenance.decay_days,
         dedup_similarity=manifest.maintenance.dedup_similarity,
+        proc_stale_sentence=_proc_stale_sentence(manifest),
+    )
+
+
+def _proc_stale_sentence(manifest: Manifest) -> str:
+    """The §9.4 stale-report sentence, appended to the deprecation bullet.
+
+    Empty when `maintenance.proc_stale_days` is 0 -- a disabled report must not
+    be documented as if it ran.
+    """
+    days = manifest.maintenance.proc_stale_days
+    if days <= 0:
+        return ""
+    return (
+        f" Um `PROC` ativo sem teste há mais de `{days}` dias (`last_tested`, "
+        f"senão `created`) entra no **relatório** da consolidação para reteste — "
+        f"relatado, nunca alterado."
     )
 
 
@@ -358,8 +377,28 @@ def render_managed_block(manifest: Manifest) -> str:
         proposal_name=manifest.naming.proposal_name,
         decay_days=manifest.maintenance.decay_days,
         commit_prefix=manifest.maintenance.commit_prefix,
+        strict_note=_strict_note(manifest),
+        proc_stale_line=_proc_stale_sentence(manifest),
     )
     return block.strip("\n")
+
+
+def _strict_note(manifest: Manifest) -> str:
+    """The `gate.reject_on` callout for `AGENTS.md`, empty when nothing is elevated.
+
+    Rendered only when the deployment elevates a warning to a rejection --
+    otherwise the honest-gate baseline text above the table already tells the
+    whole truth.
+    """
+    if not manifest.gate.reject_on:
+        return ""
+    checks = _inline_code_list(manifest.gate.reject_on)
+    return (
+        "\n\n> [!warning] Estrito neste deployment (`gate.reject_on`)\n"
+        f"> Os checks {checks} são **rejeição** aqui, não warning. Na prática: "
+        "`confidence: high` sem `meta.evidence` ao lado é recusado — declare a "
+        "verificação que justifica o high, ou rebaixe para `medium`."
+    )
 
 
 def _marker_offsets(text: str, marker: str) -> list[int]:
@@ -446,6 +485,75 @@ def render_agents_md(manifest: Manifest, existing: str | None = None) -> str:
     if existing is None:
         return f"{block}\n"
     return merge_managed_block(existing, block)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Drift detection (§10, R6.4)
+# ══════════════════════════════════════════════════════════════════════
+@dataclass(frozen=True, slots=True)
+class DerivedDocsStatus:
+    """Whether the manifest-derived documents on disk match the manifest.
+
+    Content comparison, never mtimes: a ``git checkout`` rewrites every mtime
+    without changing a byte, and a stale doc is stale because of what it *says*.
+
+    Attributes:
+        schema_stale: ``_meta/schema.md`` is missing or differs from a fresh
+            render of the current manifest.
+        agents_stale: The ``AGENTS.md`` managed block is missing or differs.
+            ``False`` when the file is ambiguous -- staleness cannot be told.
+        agents_ambiguous: ``AGENTS.md`` has broken/duplicated block markers, so
+            ``mechabrain sync`` would refuse to touch it.
+    """
+
+    schema_stale: bool = False
+    agents_stale: bool = False
+    agents_ambiguous: bool = False
+
+    @property
+    def stale_names(self) -> tuple[str, ...]:
+        """The stale file names, for a log line or a hint."""
+        names: list[str] = []
+        if self.schema_stale:
+            names.append("_meta/schema.md")
+        if self.agents_stale:
+            names.append("AGENTS.md")
+        return tuple(names)
+
+    @property
+    def any_stale(self) -> bool:
+        return self.schema_stale or self.agents_stale
+
+
+def derived_docs_status(paths: VaultPaths, manifest: Manifest) -> DerivedDocsStatus:
+    """Compare `schema.md` and `AGENTS.md` on disk against a fresh render.
+
+    The drift this detects is the §10 failure mode the managed block exists to
+    prevent: a `config.yaml` edited without a `mechabrain sync`, leaving agents
+    reading yesterday's boundaries. `check` reports it; `serve` warns on boot.
+    Read-only -- fixing is `mechabrain sync`'s job.
+    """
+    schema_stale = (
+        not paths.schema_file.is_file()
+        or paths.schema_file.read_text(encoding="utf-8") != render_schema(manifest)
+    )
+
+    agents_stale = False
+    agents_ambiguous = False
+    if not paths.agents_file.is_file():
+        agents_stale = True
+    else:
+        existing = paths.agents_file.read_text(encoding="utf-8")
+        try:
+            agents_stale = render_agents_md(manifest, existing) != existing
+        except MechabrainError:
+            agents_ambiguous = True
+
+    return DerivedDocsStatus(
+        schema_stale=schema_stale,
+        agents_stale=agents_stale,
+        agents_ambiguous=agents_ambiguous,
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════
