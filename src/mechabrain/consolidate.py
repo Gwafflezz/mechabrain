@@ -107,7 +107,6 @@ __all__ = [
     "DeprecatedProcedural",
     "StaleProcedural",
     "DocCitingDead",
-    "DocBrokenLink",
     "CONSOLIDATION_REPORT_FILE",
 ]
 
@@ -238,21 +237,6 @@ class DocCitingDead:
 
 
 @dataclass(frozen=True, slots=True)
-class DocBrokenLink:
-    """A wikilink in a read-only doc that resolves to no note (Fase 2).
-
-    A mechanical sign the doc references something renamed or removed. Reported,
-    never touched (P4).
-    """
-
-    doc: str
-    target: str
-
-    def as_dict(self) -> dict[str, Any]:
-        return {"doc": wikilink_for(self.doc), "target": self.target}
-
-
-@dataclass(frozen=True, slots=True)
 class ConsolidationReport:
     """The result of one :func:`consolidate` cycle -- counts plus the judgement
     items an agent must act on.
@@ -272,7 +256,6 @@ class ConsolidationReport:
     deprecated: tuple[DeprecatedProcedural, ...] = ()
     stale_procedurals: tuple[StaleProcedural, ...] = ()
     docs_citing_dead: tuple[DocCitingDead, ...] = ()
-    doc_broken_links: tuple[DocBrokenLink, ...] = ()
     committed: bool = False
     commit: str | None = None
 
@@ -287,7 +270,6 @@ class ConsolidationReport:
             "deprecated": [d.as_dict() for d in self.deprecated],
             "stale_procedurals": [s.as_dict() for s in self.stale_procedurals],
             "docs_citing_dead": [d.as_dict() for d in self.docs_citing_dead],
-            "doc_broken_links": [d.as_dict() for d in self.doc_broken_links],
             "committed": self.committed,
             "commit": self.commit,
         }
@@ -384,10 +366,11 @@ def consolidate(
             excluded={*deprecatable, *(d.note_id for d in decayed)},
         )
 
-        # 4c -- validate read-only docs (Mecha-Scribe Fase 2): report docs whose
-        # citations went dead or broke. Reuses the graph the cycle already built;
-        # detect-and-report only -- a doc is human/agent content, never touched (P4).
-        docs_citing_dead, doc_broken_links = _validate_readonly_docs(
+        # 4c -- validate read-only docs (Mecha-Scribe Fase 2): report docs that
+        # cite a memory now archived/deprecated/superseded. Reuses the graph the
+        # cycle already built; detect-and-report only -- a doc is human/agent
+        # content, never touched (P4).
+        docs_citing_dead = _validate_readonly_docs(
             graph, memory_by_id, readonly_notes, decayed, deprecated
         )
 
@@ -425,7 +408,6 @@ def consolidate(
         "deprecated": len(deprecated),
         "stale_procedurals": len(stale_procedurals),
         "docs_citing_dead": len(docs_citing_dead),
-        "doc_broken_links": len(doc_broken_links),
         "notes_reindexed": notes_reindexed,
         "chunks_indexed": chunk_count,
     }
@@ -439,7 +421,6 @@ def consolidate(
         deprecated=tuple(deprecated),
         stale_procedurals=tuple(stale_procedurals),
         docs_citing_dead=docs_citing_dead,
-        doc_broken_links=doc_broken_links,
         committed=committed,
         commit=sha,
     )
@@ -872,24 +853,26 @@ def _validate_readonly_docs(
     readonly_notes: Sequence[_Typed],
     decayed: Sequence[DecayedNote],
     deprecated: Sequence[DeprecatedProcedural],
-) -> tuple[tuple[DocCitingDead, ...], tuple[DocBrokenLink, ...]]:
-    """Report read-only docs whose citations went dead or broke (Fase 2).
+) -> tuple[DocCitingDead, ...]:
+    """Report read-only docs that cite a now-dead memory (Fase 2).
 
-    Two mechanical signals a project doc lags the memory it documents, both
-    read off the ``LinkGraph`` this cycle already built (which spans the memory
-    folders plus ``zones.read_only_index``):
+    A doc links to a memory that is ``arquivado``, ``deprecado`` or superseded;
+    the successor is carried when known so the report can say "cites [[Y]]
+    (deprecada → [[Z]])". Read off the ``LinkGraph`` this cycle already built.
 
-    * ``docs_citing_dead`` -- a doc links to a memory that is ``arquivado``,
-      ``deprecado`` or superseded. The successor is carried when known so the
-      report can say "cites [[Y]] (deprecada → [[Z]])".
-    * ``doc_broken_links`` -- a doc's wikilink resolves to no note at all.
-
-    Detect-and-report only: a doc is human/agent-authored content, so the kernel
-    never edits it (P4) -- an agent proposes the fix via ``memory_propose``.
+    This is the *reliable* half of doc validation: the target is a real memory
+    the graph knows, so there is no false positive. A general "broken wikilink"
+    check was deliberately dropped -- the graph only spans the memory folders
+    plus ``zones.read_only_index``, so it cannot tell a genuinely missing note
+    from one that simply lives elsewhere in the vault (a root dashboard, an
+    ``MOC_*``, an attachment ``![[img.png]]``); flagging those is noise, and
+    Obsidian already surfaces real broken links. Detect-and-report only: a doc
+    is human/agent-authored content, never edited (P4) -- an agent proposes the
+    fix via ``memory_propose``.
     """
     readonly_ids = {t.note_id for t in readonly_notes if t.note_id}
     if not readonly_ids:
-        return (), ()
+        return ()
 
     # A memory is "dead" if archived/deprecated/superseded. The note frontmatter
     # already reflects this cycle's decay/deprecation (those steps mutate the
@@ -924,14 +907,7 @@ def _validate_readonly_docs(
             DocCitingDead(doc=edge.source, cited=edge.target, status=info[0], successor=info[1])
         )
     citing_dead.sort(key=lambda d: (d.doc, d.cited))
-
-    broken = [
-        DocBrokenLink(doc=link.source, target=link.raw_target)
-        for link in graph.broken_links
-        if link.source in readonly_ids
-    ]
-    broken.sort(key=lambda d: (d.doc, d.target))
-    return tuple(citing_dead), tuple(broken)
+    return tuple(citing_dead)
 
 
 # ══════════════════════════════════════════════════════════════════════

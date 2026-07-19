@@ -641,10 +641,7 @@ def _render_consolidation_report(report: Any) -> str:
     lines.append(
         f"  stale procedurals (retest suggested): {counts.get('stale_procedurals', 0)}"
     )
-    lines.append(
-        f"  docs citing dead memories: {counts.get('docs_citing_dead', 0)}, "
-        f"docs with broken links: {counts.get('doc_broken_links', 0)}"
-    )
+    lines.append(f"  docs citing dead memories: {counts.get('docs_citing_dead', 0)}")
     lines.append(f"  chunks indexed: {counts.get('chunks_indexed', 0)}")
     if report.committed:
         lines.append(f"  committed: {report.commit}")
@@ -674,10 +671,6 @@ def _render_consolidation_report(report: Any) -> str:
         for cite in report.docs_citing_dead:
             arrow = f" -> [[{cite.successor}]]" if cite.successor else ""
             lines.append(f"    - [[{cite.doc}]] cites [[{cite.cited}]] ({cite.status}{arrow})")
-    if report.doc_broken_links:
-        lines.append("  these docs have broken wikilinks (target missing):")
-        for link in report.doc_broken_links:
-            lines.append(f"    - [[{link.doc}]] -> [[{link.target}]] (no such note)")
     return "\n".join(lines)
 
 

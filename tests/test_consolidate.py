@@ -947,13 +947,13 @@ def test_empty_vault_consolidates_cleanly(
 # ══════════════════════════════════════════════════════════════════════
 # Step 4c -- validate read-only docs (Mecha-Scribe Fase 2)
 # ══════════════════════════════════════════════════════════════════════
-def test_reports_docs_citing_dead_memories_and_broken_links(
+def test_reports_docs_citing_dead_memories(
     make_vault: Callable[..., VaultPaths],
     write_note: Callable[..., Note],
     manifest_data_ci: dict[str, Any],
 ) -> None:
-    """A read-only doc that cites an archived/superseded memory, or holds a
-    wikilink to no note, is reported -- detect-and-report, never touched (P4)."""
+    """A read-only doc that cites an archived/superseded memory is reported --
+    detect-and-report, never touched (P4)."""
     paths, manifest = _vault(
         make_vault, manifest_data_ci, decay_days=100_000, read_only_index=["Notes/"]
     )
@@ -982,13 +982,15 @@ def test_reports_docs_citing_dead_memories_and_broken_links(
         title="Live fact",
         created=date(2026, 6, 1),
     )
-    # A read-only project doc citing the dead memory and a missing note.
+    # A read-only project doc citing the dead memory, plus a wikilink to a note
+    # outside the indexed scope (a root note / attachment): that must NOT be
+    # flagged -- only the dead-memory citation is a reliable signal.
     notes_dir = paths.root / "Notes"
     notes_dir.mkdir(parents=True, exist_ok=True)
     write_note(
         notes_dir / "2026-06-02_DOC_guide.md",
         {"title": "Guide", "created": date(2026, 6, 2), "modified": date(2026, 6, 2)},
-        "Follow [[2026-01-15_INS_dead]]; see also [[nao-existe-nada]].",
+        "Follow [[2026-01-15_INS_dead]]; see the dashboard [[GES_DASHBOARD_CENTRAL]].",
     )
 
     report = consolidate(paths, manifest, today=_FUTURE, commit=False)
@@ -1000,10 +1002,8 @@ def test_reports_docs_citing_dead_memories_and_broken_links(
     assert dead.status == "superseded"
     assert dead.successor == "2026-06-01_INS_live"
 
-    assert report.counts["doc_broken_links"] == 1
-    broken = report.doc_broken_links[0]
-    assert broken.doc == "2026-06-02_DOC_guide"
-    assert broken.target == "nao-existe-nada"
+    # No broken-link report exists: a link out of scope is not a defect.
+    assert "doc_broken_links" not in report.counts
 
     # P4: the doc is content, never rewritten by the kernel.
     assert (notes_dir / "2026-06-02_DOC_guide.md").read_text(encoding="utf-8").count("[[") == 2
@@ -1030,4 +1030,3 @@ def test_live_memory_citation_is_not_reported(
     report = consolidate(paths, manifest, today=_FUTURE, commit=False)
 
     assert report.counts["docs_citing_dead"] == 0
-    assert report.counts["doc_broken_links"] == 0
