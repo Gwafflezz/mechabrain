@@ -165,18 +165,8 @@ function MaintenancePanel() {
                     ))}
                 </div>
             )}
-            {(report.doc_broken_links || []).length > 0 && (
-                <div>
-                    <strong style={{ fontSize: "0.85em" }}>Docs com links quebrados:</strong>
-                    {report.doc_broken_links.map((d, i) => (
-                        <div key={i} style={{ fontSize: "0.85em", marginLeft: "12px" }}>
-                            {noteLink(d.doc)} <span style={dimStyle}>→ {d.target} (nota inexistente)</span>
-                        </div>
-                    ))}
-                </div>
-            )}
-            {!(report.merge_candidates || []).length && !(report.stale_procedurals || []).length && !(report.cross_scope_similar || []).length && !(report.docs_citing_dead || []).length && !(report.doc_broken_links || []).length && (
-                <span style={dimStyle}>Nada pendente de decisão — sem duplicatas, sem PROC stale, docs íntegros.</span>
+            {!(report.merge_candidates || []).length && !(report.stale_procedurals || []).length && !(report.cross_scope_similar || []).length && !(report.docs_citing_dead || []).length && (
+                <span style={dimStyle}>Nada pendente de decisão — sem duplicatas, sem PROC stale.</span>
             )}
         </div>
     );
