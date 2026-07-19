@@ -573,14 +573,31 @@ class TestRenderHot:
         assert "INS_stale-fact" not in hot
         assert "## proj-b" not in hot
 
-    def test_includes_episodic_and_research(
+    def test_excludes_episodic_and_research(
         self, sample_notes: list[Note], manifest_ci: Manifest
     ) -> None:
-        # hot.md is a cache of attention, not a MOC: what happened recently
-        # counts.
+        # The blackboard is current knowledge for handover, not the session
+        # journal: episodics (what happened) and long-form research never appear
+        # -- that is what keeps it from growing into a log of finished work.
         hot = render_hot(sample_notes, manifest_ci)
-        assert "[[2026-01-15_MEM_session-one]]" in hot
-        assert "[[2026-01-15_RES_link-expansion]]" in hot
+        assert "[[2026-01-15_MEM_session-one]]" not in hot
+        assert "[[2026-01-15_RES_link-expansion]]" not in hot
+        # Reusable knowledge (Semantic/Procedural) still appears.
+        assert "[[2026-01-15_INS_vector-search]]" in hot
+        assert "[[PROC_deploy-playbook]]" in hot
+
+    def test_hot_days_window_drops_stale_entries(
+        self, sample_notes: list[Note], manifest_ci: Manifest
+    ) -> None:
+        # The window keeps the board a current snapshot: knowledge not touched
+        # within hot_days leaves it (but stays in index.md and search).
+        ins = "[[2026-01-15_INS_vector-search]]"
+        within = render_hot(sample_notes, manifest_ci, reference=date(2026, 1, 20), hot_days=21)
+        assert ins in within  # touched 5 days ago, inside the 21-day window
+        stale = render_hot(sample_notes, manifest_ci, reference=date(2026, 3, 1), hot_days=21)
+        assert ins not in stale  # >21 days: dropped from the board
+        disabled = render_hot(sample_notes, manifest_ci, reference=date(2026, 3, 1), hot_days=0)
+        assert ins in disabled  # hot_days=0 disables the window
 
     def test_every_line_points_at_a_real_note(
         self, sample_notes: list[Note], manifest_ci: Manifest

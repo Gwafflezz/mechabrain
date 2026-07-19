@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mechabrain"
-version = "0.2.4"
+version = "0.2.5"
 description = "Drop-in agentic memory kernel for Markdown vaults (CoALA-based)"
 readme = "README.md"
 requires-python = ">=3.11"

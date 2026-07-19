@@ -38,7 +38,7 @@ from __future__ import annotations
 import string
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, Final
@@ -99,6 +99,13 @@ HOT_SECTION_MAX_ENTRIES: Final[int] = 15
 #: Types `index.md` maps. Episodic is a journal, not a claim about the world,
 #: and Research is long-form: neither belongs in a one-line-per-memory MOC (§9.5).
 INDEX_TYPES: Final[tuple[MemoryType, ...]] = (MemoryType.SEMANTIC, MemoryType.PROCEDURAL)
+
+#: Types `hot.md` shows (R8.2). Same reasoning as the index: the blackboard is
+#: current *knowledge* (reusable insight and tested procedure), not the session
+#: journal -- an episodic is what happened, not the focus now, and long-form
+#: research is not a blackboard line. Keeping session logs off the board is what
+#: stops it growing into a handover-polluting log of finished work.
+HOT_TYPES: Final[tuple[MemoryType, ...]] = (MemoryType.SEMANTIC, MemoryType.PROCEDURAL)
 
 #: Statuses that keep a memory out of the generated maps (§9.3, §9.4). They stay
 #: searchable behind an explicit filter -- consolidation archives, never deletes (P8).
@@ -384,6 +391,7 @@ def render_managed_block(manifest: Manifest) -> str:
         commit_prefix=manifest.maintenance.commit_prefix,
         strict_note=_strict_note(manifest),
         proc_stale_line=_proc_stale_sentence(manifest),
+        hot_days=manifest.maintenance.hot_days,
     )
     return block.strip("\n")
 
@@ -826,6 +834,8 @@ def render_hot(
     *,
     active_scopes: Sequence[str] | None = None,
     max_entries: int = HOT_SECTION_MAX_ENTRIES,
+    reference: date | None = None,
+    hot_days: int = 0,
 ) -> str:
     """Render `hot.md`: one section per active scope, newest first (R8.2).
 
@@ -835,20 +845,35 @@ def render_hot(
     `created`), which is the only "attention" signal the kernel can measure
     without an LLM.
 
+    The board carries only :data:`HOT_TYPES` (reusable knowledge -- ``Semantic``
+    and ``Procedural``): a session's episodic is history, not the focus now, so
+    it never appears -- that is what keeps the board from growing into a log of
+    finished work. When ``hot_days`` is set, an entry also has to have been
+    touched within that window, so the board stays a *current* snapshot for
+    handover instead of accumulating indefinitely.
+
     Args:
-        memories: Candidate notes. Archived and deprecated ones are dropped.
+        memories: Candidate notes. Archived, deprecated, episodic and research
+            notes are dropped.
         manifest: Source of scope order, prefixes and tag namespaces.
         active_scopes: Scopes the consolidator judged active (recent write or
             access), in the order to render. ``None`` falls back to every scope
             that has a live memory, most recently touched first -- correct for a
             first run, but the consolidator knows better and should say so.
         max_entries: Ceiling per section (R8.2's "~15 linhas").
+        reference: The "now" the ``hot_days`` window is measured against; the
+            consolidation reference date. Ignored when ``hot_days`` is ``0``.
+        hot_days: Attention window in days; ``0`` disables it (cap only).
 
     Returns:
-        The file content. Timestamp-free, so an unchanged vault re-renders
-        byte-identically and consolidation commits nothing.
+        The file content. Timestamp-free at the file level, so an unchanged
+        vault re-renders byte-identically and consolidation commits nothing.
     """
-    grouped = _group_by_scope(_entries(memories, manifest))
+    entries = _entries(memories, manifest, types=HOT_TYPES)
+    if hot_days > 0 and reference is not None:
+        cutoff = reference - timedelta(days=hot_days)
+        entries = [entry for entry in entries if entry.recency >= cutoff]
+    grouped = _group_by_scope(entries)
     for entries in grouped.values():
         entries.sort(key=lambda entry: entry.recency_key, reverse=True)
 
@@ -958,11 +983,20 @@ def write_hot(
     *,
     active_scopes: Sequence[str] | None = None,
     max_entries: int = HOT_SECTION_MAX_ENTRIES,
+    reference: date | None = None,
+    hot_days: int = 0,
 ) -> Path:
     """Write `hot.md` (R8.1: only the consolidator calls this)."""
     return write_atomic(
         paths.hot_file,
-        render_hot(memories, manifest, active_scopes=active_scopes, max_entries=max_entries),
+        render_hot(
+            memories,
+            manifest,
+            active_scopes=active_scopes,
+            max_entries=max_entries,
+            reference=reference,
+            hot_days=hot_days,
+        ),
     )
 
 

@@ -115,7 +115,7 @@ As denylists existem porque a vault hospedeira tem automações e plugins própr
 
 O que ele **não** faz: fundir duplicatas. Fusão exige julgamento e o kernel não tem LLM — ele detecta e **relata** os candidatos (mesmo escopo, acima do limiar) e a fusão é feita por um agente via `memory_write` com `supersedes`, preservando detalhe (§9.2). Pares cross-scope similares vão para uma lista separada do relatório e **nunca** são fundidos.
 
-Leia `mecha-brain/hot.md` para o foco atual (blackboard compartilhado, por escopo) e `mecha-brain/index.md` para o mapa das memórias ativas. Ambos são gerados: aponte-se por eles, não escreva neles.
+Leia `mecha-brain/hot.md` para o foco atual (blackboard por escopo) e `mecha-brain/index.md` para o mapa das memórias ativas. O `hot.md` é um retrato ENXUTO para handover: só conhecimento reutilizável (`Semantic`/`Procedural`) tocado nos últimos `$hot_days` dias — **episódicos não entram** (são history; ache-os na busca). Ambos são gerados: aponte-se por eles, não escreva neles.
 
 ## 8. Higiene de memória — quando registrar (e quando não)
 

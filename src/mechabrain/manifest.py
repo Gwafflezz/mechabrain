@@ -867,18 +867,26 @@ class MaintenanceSpec:
     ``PROC`` whose last recorded test (``last_tested:``, falling back to
     ``created:``) is older than this many days is listed for an agent to retest
     -- detected and reported, never touched. ``0`` disables the report.
+
+    ``hot_days`` is the ``hot.md`` attention window (R8.2): a memory appears on
+    the blackboard only if it was touched (``last_accessed``, else ``modified``,
+    else ``created``) within this many days. It keeps the board a *current*
+    snapshot for handover rather than an ever-growing log; ``0`` disables the
+    window (cap only). Episodics never appear regardless -- the board is
+    reusable knowledge (``Semantic``/``Procedural``), not the session journal.
     """
 
     decay_days: int = 90
     dedup_similarity: float = 0.92
     commit_prefix: str = "chore(ai-memory):"
     proc_stale_days: int = 180
+    hot_days: int = 21
 
     @classmethod
     def _parse(cls, data: Mapping[str, Any], path: str) -> "MaintenanceSpec":
         _check_unknown_keys(
             data,
-            ("decay_days", "dedup_similarity", "commit_prefix", "proc_stale_days"),
+            ("decay_days", "dedup_similarity", "commit_prefix", "proc_stale_days", "hot_days"),
             path,
         )
         return cls(
@@ -894,6 +902,7 @@ class MaintenanceSpec:
             ),
             commit_prefix=_get_str(data, "commit_prefix", path, default="chore(ai-memory):"),
             proc_stale_days=_get_int(data, "proc_stale_days", path, 180, minimum=0),
+            hot_days=_get_int(data, "hot_days", path, 21, minimum=0),
         )
 
 

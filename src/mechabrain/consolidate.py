@@ -391,6 +391,8 @@ def consolidate(
                 [t.note for t in memory_notes],
                 manifest,
                 active_scopes=active_scopes,
+                reference=reference,
+                hot_days=manifest.maintenance.hot_days,
             )
 
         # 6 -- commit (§9.6): one commit, never _meta/index/

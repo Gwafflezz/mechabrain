@@ -25,7 +25,7 @@ error base, keeping the import cheap and free of cycles::
 
 from __future__ import annotations
 
-__version__ = "0.2.4"
+__version__ = "0.2.5"
 
 from .errors import MechabrainError
 

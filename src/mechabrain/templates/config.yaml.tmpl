@@ -125,3 +125,6 @@ maintenance:
   proc_stale_days: 180         # PROC ativo sem teste há N dias (last_tested, senão created)
                                # entra no RELATÓRIO da consolidação para reteste — nunca é
                                # alterado (§9.4). 0 desliga.
+  hot_days: 21                 # janela de atenção do hot.md (R8.2): só entra no blackboard
+                               # memória tocada nos últimos N dias. Mantém o board um
+                               # retrato ATUAL (não um log). Episódicos nunca entram. 0 desliga.
