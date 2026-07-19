@@ -77,13 +77,20 @@ const getValue = (p, key) => {
 
 const pathOf = (p) => p.$path || p.file?.path || p.path || "";
 
+// Formata "YYYY-MM-DD" ou "YYYY-MM-DD HH:MM" quando há hora (≠ meia-noite):
+// desde v0.2.6 created/modified carregam a hora de alteração.
+const fmtStamp = (s) => {
+    const m = String(s).match(/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}))?/);
+    if (!m) return String(s).slice(0, 10);
+    return m[2] && m[2] !== "00:00" ? `${m[1]} ${m[2]}` : m[1];
+};
 const toDateStr = (val) => {
     if (!val) return "";
-    if (typeof val === "string") return val.slice(0, 10);
-    if (typeof val.toISODate === "function") return val.toISODate(); // luxon
-    if (val instanceof Date) return val.toISOString().slice(0, 10);
-    if (typeof val.toISOString === "function") return val.toISOString().slice(0, 10);
-    return String(val).slice(0, 10);
+    if (typeof val === "string") return fmtStamp(val);
+    if (typeof val.toFormat === "function") return fmtStamp(val.toFormat("yyyy-MM-dd HH:mm")); // luxon
+    if (val instanceof Date) return fmtStamp(val.toISOString());
+    if (typeof val.toISOString === "function") return fmtStamp(val.toISOString());
+    return fmtStamp(String(val));
 };
 
 const memoryTypeOf = (path) => {
