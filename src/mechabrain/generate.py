@@ -586,6 +586,31 @@ def _as_date(value: Any) -> date | None:
     return None
 
 
+def _as_datetime(value: Any) -> datetime | None:
+    """Coerce a frontmatter timestamp to a **naive local** datetime.
+
+    Since v0.2.6 the writer stamps ``created``/``modified``/``last_accessed`` as
+    tz-aware datetimes (time of change, not just the day); older notes carry
+    date-only values. Normalising both to naive local -- dates at midnight, aware
+    datetimes converted to local wall-clock and stripped of tzinfo -- lets a
+    mixed corpus sort and compare without the naive/aware ``TypeError``, and is
+    what the display formats.
+    """
+    if isinstance(value, datetime):
+        return value.astimezone().replace(tzinfo=None) if value.tzinfo else value
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day)
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            day = _as_date(text)
+            return datetime(day.year, day.month, day.day) if day else None
+        return parsed.astimezone().replace(tzinfo=None) if parsed.tzinfo else parsed
+    return None
+
+
 def _type_of(note: Note, manifest: Manifest) -> MemoryType | None:
     """The memory type of ``note``: from its tags, else from its folder.
 
@@ -630,14 +655,15 @@ class _Entry:
     prefix: str
     agent: str
     confidence: str
-    recency: date
+    recency: datetime  # attention: last_accessed > modified > created (ranks/windows)
+    changed: datetime  # time of alteration: modified > created (what hot.md shows)
 
     @property
     def sort_key(self) -> tuple[str, str]:
         return (self.title.casefold(), self.note_id)
 
     @property
-    def recency_key(self) -> tuple[date, str, str]:
+    def recency_key(self) -> tuple[datetime, str, str]:
         return (self.recency, *self.sort_key)
 
     def index_line(self) -> str:
@@ -646,8 +672,18 @@ class _Entry:
         return f"- [[{self.note_id}]] — {self.title} · {' · '.join(parts)}"
 
     def hot_line(self) -> str:
-        """Same shape as :meth:`index_line`, dated instead of scored."""
-        stamp = self.recency.isoformat() if self.recency != date.min else ""
+        """Same shape as :meth:`index_line`, timestamped instead of scored.
+
+        Shows the time the note was **altered** (``modified``), day plus
+        ``HH:MM`` -- much can happen in one day. Falls back to the day alone for
+        an older date-only note.
+        """
+        if self.changed == datetime.min:
+            stamp = ""
+        elif self.changed.hour or self.changed.minute or self.changed.second:
+            stamp = self.changed.strftime("%Y-%m-%d %H:%M")
+        else:
+            stamp = self.changed.date().isoformat()
         parts = [part for part in (self.prefix, self.agent, stamp) if part]
         return f"- [[{self.note_id}]] — {self.title} · {' · '.join(parts)}"
 
@@ -672,12 +708,8 @@ def _entries(
         memory_type = _type_of(note, manifest)
         if memory_type is None or memory_type not in wanted:
             continue
-        recency = (
-            _as_date(note.get("last_accessed"))
-            or _as_date(note.get("modified"))
-            or _as_date(note.get("created"))
-            or date.min
-        )
+        changed = _as_datetime(note.get("modified")) or _as_datetime(note.get("created"))
+        recency = _as_datetime(note.get("last_accessed")) or changed or datetime.min
         entries.append(
             _Entry(
                 note_id=note.note_id,
@@ -688,6 +720,7 @@ def _entries(
                 agent=str(note.get("agent") or "").strip(),
                 confidence=str(note.get("confidence") or "").strip(),
                 recency=recency,
+                changed=changed or datetime.min,
             )
         )
     return entries
@@ -872,7 +905,7 @@ def render_hot(
     entries = _entries(memories, manifest, types=HOT_TYPES)
     if hot_days > 0 and reference is not None:
         cutoff = reference - timedelta(days=hot_days)
-        entries = [entry for entry in entries if entry.recency >= cutoff]
+        entries = [entry for entry in entries if entry.recency.date() >= cutoff]
     grouped = _group_by_scope(entries)
     for entries in grouped.values():
         entries.sort(key=lambda entry: entry.recency_key, reverse=True)
@@ -882,7 +915,7 @@ def render_hot(
         # `reverse=True` would break backwards.
         ordered = sorted(
             grouped,
-            key=lambda scope: ((date.max - grouped[scope][0].recency).days, scope),
+            key=lambda scope: ((date.max - grouped[scope][0].recency.date()).days, scope),
         )
     else:
         ordered = [scope for scope in active_scopes if grouped.get(scope)]

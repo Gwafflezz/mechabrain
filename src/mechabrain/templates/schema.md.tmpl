@@ -10,15 +10,15 @@
 ---
 title: "..."
 tags: [$tags_example]
-created: YYYY-MM-DD
-modified: YYYY-MM-DD
+created: YYYY-MM-DD HH:MM:SS±HH:MM   # data-hora do carimbo (muito acontece num dia)
+modified: YYYY-MM-DD HH:MM:SS±HH:MM
 agent: <id do registry>        # quem escreveu (runtime)
 profile: <persona>             # opcional — perfil do runtime autor (R6.6)
 scope: <slug | global>         # projeto ao qual a memória pertence (R6.5)
 source: "<sessão/execução/ponte de origem>"  # rastreabilidade (P7)
 confidence: $confidence_values
-last_accessed: YYYY-MM-DD      # atualizado pelo consolidador (R7.3)
-last_tested: YYYY-MM-DD        # só procedural — carimbado na escrita (§8.2 item 6); atualize ao retestar
+last_accessed: YYYY-MM-DD      # dia (UTC); atualizado pelo consolidador (R7.3)
+last_tested: YYYY-MM-DD HH:MM:SS±HH:MM  # só procedural — carimbado na escrita (§8.2 item 6); atualize ao retestar
 supersedes: "[[...]]"          # opcional — memória que esta substitui
 status: $status_values   # deprecado só para procedural
 ---
@@ -30,15 +30,15 @@ status: $status_values   # deprecado só para procedural
 |---|---|---|---|
 | `title` | sim | texto livre | — |
 | `tags` | sim | ver *Tags*, abaixo | R6.1 |
-| `created` | sim | `YYYY-MM-DD` | — |
-| `modified` | sim | `YYYY-MM-DD` | — |
+| `created` | sim | `YYYY-MM-DD HH:MM:SS±TZ` | data-hora local do carimbo (o nome do arquivo fica só com o dia) |
+| `modified` | sim | `YYYY-MM-DD HH:MM:SS±TZ` | data-hora da última alteração |
 | `agent` | sim | $agent_ids_inline | R6.2 — autor fora do registry é recusado |
 | `profile` | não | ver *Registry*, abaixo | R6.6 — deve constar nos `profiles` do agente autor |
 | `scope` | sim | $scopes_inline | R6.5 — `$scope_default` na ausência de projeto |
 | `source` | sim | texto livre | P7 / §8.2 item 4 |
 | `confidence` | sim | $confidence_values_cell | `high` só com verificação ou fonte primária |
 | `last_accessed` | não | `YYYY-MM-DD` | escrito pelo consolidador, não pelo agente (R7.3) |
-| `last_tested` | não (só `procedural`) | `YYYY-MM-DD` | carimbado pelo kernel na escrita (a evidência atesta uma execução); atualizado por quem retesta (§9.4) |
+| `last_tested` | não (só `procedural`) | `YYYY-MM-DD HH:MM:SS±TZ` | carimbado pelo kernel na escrita (a evidência atesta uma execução); atualizado por quem retesta (§9.4) |
 | `supersedes` | não | `"[[wikilink]]"` | a memória que esta substitui |
 | `status` | sim | $status_values_cell | `deprecado` só para `procedural` (§9.4) |
 

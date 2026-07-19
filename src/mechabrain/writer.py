@@ -45,7 +45,7 @@ import string
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Final, Protocol
 
@@ -196,7 +196,7 @@ def write(
     search_fn: SearchFn | None = None,
     *,
     indexer: Indexer | None = None,
-    today: date | None = None,
+    today: date | datetime | None = None,
     lock: bool = True,
 ) -> WriteResult:
     """Execute a governed write into ``mecha-brain/`` (§7.2).
@@ -221,9 +221,11 @@ def write(
             `semantic`/`procedural`; unused for `episodic`/`research`.
         indexer: Incremental reindexer for the new and archived notes. ``None``
             leaves the derived index stale until the next reindex (P1).
-        today: Date stamped into filenames and `created`/`modified`/
-            `last_accessed`. Defaults to :meth:`datetime.date.today`; inject a
-            fixed date in tests.
+        today: Stamp for `created`/`modified`/`last_accessed` (and the filename
+            date). Defaults to the local ``datetime.now()`` (tz-aware), so the
+            frontmatter carries the time of change, not just the day -- much can
+            happen in one day. The filename keeps its `{date}` (day only). Inject
+            a fixed ``date`` (or ``datetime``) in tests.
         lock: Hold the index write-lock for the whole read-modify-write cycle
             (R7.4 fallback). Pass ``False`` only when the caller already holds
             it -- ``FileLock`` deadlocks against a second instance of itself on
@@ -238,7 +240,7 @@ def write(
         Exception: whatever ``search_fn`` or ``indexer`` raises propagates.
     """
     memory_type = MemoryType.parse(str(type))
-    stamp = today if today is not None else date.today()
+    stamp = today if today is not None else datetime.now().astimezone().replace(microsecond=0)
 
     if not lock:
         return _write_locked(
@@ -258,7 +260,7 @@ def _write_locked(
     vault: VaultPaths,
     search_fn: SearchFn | None,
     indexer: Indexer | None,
-    stamp: date,
+    stamp: date | datetime,
 ) -> WriteResult:
     gate = evaluate(memory_type, meta, content, manifest, search_fn=search_fn)
     if not gate.approved:
@@ -282,7 +284,7 @@ def _write_locked(
         if memory_type is MemoryType.EPISODIC
         else vault.folder_for(memory_type)
     )
-    target = _unique_path(directory, _filename(memory_type, note.title, manifest, stamp))
+    target = _unique_path(directory, _filename(memory_type, note.title, manifest, _stamp_date(stamp)))
     note.write(target)
 
     archived, missing, episodic = _apply_supersedes(
@@ -318,7 +320,7 @@ def propose(
     manifest: Manifest,
     vault: VaultPaths,
     *,
-    today: date | None = None,
+    today: date | datetime | None = None,
 ) -> ProposalResult:
     """Record a proposed change to a note outside ``mecha-brain/`` (§7.2).
 
@@ -345,7 +347,7 @@ def propose(
         ManifestError: `agent` is missing or not in the registry (R6.2).
         DenylistViolation: an assembled key or tag is on a denylist (R6.1).
     """
-    stamp = today if today is not None else date.today()
+    stamp = today if today is not None else datetime.now().astimezone().replace(microsecond=0)
 
     agent = _text(meta.get("agent"))
     manifest.agent(agent)  # R6.2: fail loud on an unknown or missing author.
@@ -369,7 +371,7 @@ def propose(
     directory = vault.resolve(manifest.zones.proposals_dir)
     filename = _fill_name_template(
         manifest.naming.proposal_name,
-        {"date": stamp.isoformat(), "slug": slugify(target_id)},
+        {"date": _stamp_date(stamp).isoformat(), "slug": slugify(target_id)},
     )
     target = _unique_path(directory, filename)
     note.write(target)
@@ -385,6 +387,15 @@ def propose(
 # ══════════════════════════════════════════════════════════════════════
 # Frontmatter (§6)
 # ══════════════════════════════════════════════════════════════════════
+def _stamp_date(stamp: date | datetime) -> date:
+    """The day part of a stamp -- what a filename `{date}` and the ISO date use.
+
+    The frontmatter carries the full ``datetime`` (time of change), but the note
+    name stays ``YYYY-MM-DD``: one file per note, dated by day, not by second.
+    """
+    return stamp.date() if isinstance(stamp, datetime) else stamp
+
+
 def _frontmatter(
     memory_type: MemoryType,
     meta: Mapping[str, Any],
@@ -392,7 +403,7 @@ def _frontmatter(
     agent: str,
     scope: str,
     supersedes_ids: Sequence[str],
-    stamp: date,
+    stamp: date | datetime,
 ) -> dict[str, Any]:
     """Assemble the §6 frontmatter in the spec's key order.
 
@@ -447,7 +458,7 @@ def _proposal_frontmatter(
     profile: str,
     target_ref: str,
     target_id: str,
-    stamp: date,
+    stamp: date | datetime,
 ) -> dict[str, Any]:
     """Frontmatter for a proposal note.
 
