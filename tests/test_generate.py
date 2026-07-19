@@ -234,6 +234,17 @@ class TestManagedBlockContent:
             assert re.search(rf"^{step}\. ", block, re.MULTILINE)
         assert "prefira o projeto" in block
 
+    def test_carries_the_operating_contracts(self, manifest_ci: Manifest) -> None:
+        # Kernel-shipped, agent-agnostic operating contracts that init/sync
+        # deploy to every install: memory hygiene (when to write) and the
+        # Mecha-Scribe routing (long docs are content, not memory).
+        block = render_managed_block(manifest_ci)
+        assert "Higiene de memória" in block
+        assert "despejo automático" in block  # on-demand, not a per-session dump
+        assert "Mecha-Scribe" in block
+        assert "não é memória" in block
+        assert "mecha-scribe" in block  # the deployed skill
+
     def test_carries_the_gate_checklist(self, manifest_ci: Manifest) -> None:
         block = render_managed_block(manifest_ci)
         assert "§8.2" in block

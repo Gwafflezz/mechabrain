@@ -116,4 +116,31 @@ As denylists existem porque a vault hospedeira tem automações e plugins própr
 O que ele **não** faz: fundir duplicatas. Fusão exige julgamento e o kernel não tem LLM — ele detecta e **relata** os candidatos (mesmo escopo, acima do limiar) e a fusão é feita por um agente via `memory_write` com `supersedes`, preservando detalhe (§9.2). Pares cross-scope similares vão para uma lista separada do relatório e **nunca** são fundidos.
 
 Leia `mecha-brain/hot.md` para o foco atual (blackboard compartilhado, por escopo) e `mecha-brain/index.md` para o mapa das memórias ativas. Ambos são gerados: aponte-se por eles, não escreva neles.
+
+## 8. Higiene de memória — quando registrar (e quando não)
+
+Memória agentica só rende se cada nota merecer o lugar. Registrar é **decisão de julgamento, sob demanda** — nunca um despejo automático por sessão, que só polui. O gate (§4) e a consolidação (§7) são a rede que mantém isto limpo, não uma licença para despejar.
+
+**Escreva** quando a sessão produziu algo durável:
+
+- uma **decisão** com a razão (por que A e não B) que muda trabalho futuro;
+- um **insight reutilizável e não-óbvio** → `Semantic/` (INS), com evidência;
+- um **procedimento testado** → `Procedural/` (PROC);
+- o **registro de uma sessão** que outro agente — ou você amanhã — precisaria para retomar → `Episodic/`, **ligado por `memory_link`** aos INS que gerou.
+
+**Não escreva** o que:
+
+- é rotina, ou já se recupera do código, do git, do `AGENTS.md`/`CLAUDE.md` ou de um doc que já existe;
+- é um dump da sessão inteira "por via das dúvidas" — episódico mecânico por sessão é ruído;
+- não passaria no gate: não-reutilizável, não-atômico, ou sem fonte.
+
+Feche trabalho substantivo com episódico + INS ligados; deixe o trivial no contexto da sessão. Todo agente (não só um) lê e escreve sob esta regra.
+
+## 9. Documentação de projeto — Mecha-Scribe (Classe B)
+
+Documento longo (spec, plano, relatório, explicação) **não é memória** e **não entra no `mecha-brain/`**: é conteúdo da vault e vai para o diretório do projeto — `<Área>/<Projeto>/02_Docs/`, ou a raiz do projeto só para `DOC_*` de alto nível. Isto é o subsistema **Mecha-Scribe**.
+
+- **Crie** a nota do template padrão da vault (rodando o Templater pela CLI do Obsidian; ou, headless, replicando a saída — frontmatter com tags oficiais, seções do tipo, navegação). **Criar, nunca sobrescrever**: editar doc/MOC/dashboard que já existe vai por `memory_propose`.
+- **Feche com um episódico** aqui no brain citando o doc por wikilink; destile insight reutilizável em INS.
+- A skill `mecha-scribe` (deployada em `.claude/skills/mecha-scribe/` por `init`/`sync`, junto com este contrato) é a rotina executável. No brain fica só o rastro (episódico) e o destilado (INS) — o documento vive no projeto.
 $end_marker
