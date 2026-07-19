@@ -102,6 +102,12 @@ def test_init_creates_full_skeleton(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert MANAGED_BLOCK_BEGIN in agents_md
     assert MANAGED_BLOCK_END in agents_md
 
+    # A clean install carries the escriba: the Mecha-Scribe skill is deployed as a
+    # git-carried, vault-agnostic artifact (spec §11, Classe B).
+    skill = root / ".claude" / "skills" / "mecha-scribe" / "SKILL.md"
+    assert skill.is_file()
+    assert "name: mecha-scribe" in skill.read_text(encoding="utf-8")
+
     # The default manifest registers one agent ("exemplo"); its Episodic/ is made.
     manifest = Manifest.load(paths.config_file)
     for agent_id in manifest.agent_ids():

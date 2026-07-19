@@ -942,3 +942,92 @@ def test_empty_vault_consolidates_cleanly(
     assert report.counts["chunks_indexed"] == 0
     assert report.decayed == ()
     assert paths.index_file.exists()  # surfaces are still (re)generated
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Step 4c -- validate read-only docs (Mecha-Scribe Fase 2)
+# ══════════════════════════════════════════════════════════════════════
+def test_reports_docs_citing_dead_memories_and_broken_links(
+    make_vault: Callable[..., VaultPaths],
+    write_note: Callable[..., Note],
+    manifest_data_ci: dict[str, Any],
+) -> None:
+    """A read-only doc that cites an archived/superseded memory, or holds a
+    wikilink to no note, is reported -- detect-and-report, never touched (P4)."""
+    paths, manifest = _vault(
+        make_vault, manifest_data_ci, decay_days=100_000, read_only_index=["Notes/"]
+    )
+    # An archived memory that was superseded by a live successor.
+    write_note(
+        paths.semantic_dir / "2026-01-15_INS_dead.md",
+        {
+            "title": "Superseded fact",
+            "tags": ["mem/semantic", "agent/alpha"],
+            "created": _OLD,
+            "modified": _OLD,
+            "agent": "alpha",
+            "scope": "proj-a",
+            "source": "s",
+            "confidence": "medium",
+            "status": STATUS_ARCHIVED,
+            "superseded_by": "[[2026-06-01_INS_live]]",
+        },
+        "Old body.",
+    )
+    _sem(
+        write_note,
+        paths.semantic_dir / "2026-06-01_INS_live.md",
+        "proj-a",
+        "New body.",
+        title="Live fact",
+        created=date(2026, 6, 1),
+    )
+    # A read-only project doc citing the dead memory and a missing note.
+    notes_dir = paths.root / "Notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    write_note(
+        notes_dir / "2026-06-02_DOC_guide.md",
+        {"title": "Guide", "created": date(2026, 6, 2), "modified": date(2026, 6, 2)},
+        "Follow [[2026-01-15_INS_dead]]; see also [[nao-existe-nada]].",
+    )
+
+    report = consolidate(paths, manifest, today=_FUTURE, commit=False)
+
+    assert report.counts["docs_citing_dead"] == 1
+    dead = report.docs_citing_dead[0]
+    assert dead.doc == "2026-06-02_DOC_guide"
+    assert dead.cited == "2026-01-15_INS_dead"
+    assert dead.status == "superseded"
+    assert dead.successor == "2026-06-01_INS_live"
+
+    assert report.counts["doc_broken_links"] == 1
+    broken = report.doc_broken_links[0]
+    assert broken.doc == "2026-06-02_DOC_guide"
+    assert broken.target == "nao-existe-nada"
+
+    # P4: the doc is content, never rewritten by the kernel.
+    assert (notes_dir / "2026-06-02_DOC_guide.md").read_text(encoding="utf-8").count("[[") == 2
+
+
+def test_live_memory_citation_is_not_reported(
+    make_vault: Callable[..., VaultPaths],
+    write_note: Callable[..., Note],
+    manifest_data_ci: dict[str, Any],
+) -> None:
+    """A doc citing a healthy, active memory is silent -- no false positive."""
+    paths, manifest = _vault(
+        make_vault, manifest_data_ci, decay_days=100_000, read_only_index=["Notes/"]
+    )
+    _sem(write_note, paths.semantic_dir / "2026-01-15_INS_ok.md", "proj-a", "Body.")
+    notes_dir = paths.root / "Notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    write_note(
+        notes_dir / "2026-06-02_DOC_guide.md",
+        {"title": "Guide", "created": date(2026, 6, 2), "modified": date(2026, 6, 2)},
+        "Follow the live [[2026-01-15_INS_ok]].",
+    )
+
+    report = consolidate(paths, manifest, today=_FUTURE, commit=False)
+
+    assert report.counts["docs_citing_dead"] == 0
+    assert report.counts["doc_broken_links"] == 0

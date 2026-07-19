@@ -149,3 +149,44 @@ def test_boot_is_quiet_when_derived_docs_match(
     with caplog.at_level(logging.WARNING, logger="mechabrain.mcp_server"):
         mcp_server_module._warn_on_stale_docs(tmp_vault, manifest_ci)
     assert not caplog.records
+
+
+# ══════════════════════════════════════════════════════════════════════
+# memory.write indexes surgically -- never a whole-corpus re-embed (§7.2 step 8)
+# ══════════════════════════════════════════════════════════════════════
+def test_memory_write_indexes_only_its_note_never_whole_vault(
+    tmp_vault: VaultPaths, manifest_ci: Manifest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A write must index just the note it wrote via ``index_note`` and never
+    trigger a whole-vault ``reindex``.
+
+    Regression: ``memory_write`` used to run ``self._indexer.reindex()`` after
+    every write, which diffs the entire vault and re-embeds every changed note
+    -- so editing unrelated read-only context made a single write re-embed the
+    corpus. The write now holds the shared index lock and passes the indexer to
+    the writer, whose §7.2-step-8 hook indexes only the new note (and any it
+    archived).
+    """
+    indexed: list[str] = []
+
+    def spy_index_note(self: Any, note: Any, **_: Any) -> None:
+        indexed.append(getattr(note, "note_id", str(note)))
+
+    def forbidden_reindex(self: Any, *_a: Any, **_k: Any) -> None:
+        raise AssertionError("memory_write must not trigger a whole-vault reindex")
+
+    monkeypatch.setattr(mcp_server_module.Indexer, "index_note", spy_index_note)
+    monkeypatch.setattr(mcp_server_module.Indexer, "reindex", forbidden_reindex)
+
+    service = mcp_server_module.MemoryService(tmp_vault, manifest_ci)
+    try:
+        result = service.memory_write(
+            "episodic",
+            "Uma sessão de teste para o índice cirúrgico.",
+            {"title": "Sessao cirurgica", "agent": "alpha", "scope": "proj-a", "source": "t"},
+        )
+    finally:
+        service.close()
+
+    assert result["rejected"] is False
+    assert indexed == [result["id"]]

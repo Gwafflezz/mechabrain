@@ -155,8 +155,28 @@ function MaintenancePanel() {
                     ))}
                 </div>
             )}
-            {!(report.merge_candidates || []).length && !(report.stale_procedurals || []).length && !(report.cross_scope_similar || []).length && (
-                <span style={dimStyle}>Nada pendente de decisão — sem duplicatas, sem PROC stale.</span>
+            {(report.docs_citing_dead || []).length > 0 && (
+                <div>
+                    <strong style={{ fontSize: "0.85em" }}>Docs citando memórias mortas (propor edição):</strong>
+                    {report.docs_citing_dead.map((d, i) => (
+                        <div key={i} style={{ fontSize: "0.85em", marginLeft: "12px" }}>
+                            {noteLink(d.doc)} cita {noteLink(d.cites)} <span style={dimStyle}>({d.status}{d.successor ? " → " : ""})</span>{d.successor ? noteLink(d.successor) : null}
+                        </div>
+                    ))}
+                </div>
+            )}
+            {(report.doc_broken_links || []).length > 0 && (
+                <div>
+                    <strong style={{ fontSize: "0.85em" }}>Docs com links quebrados:</strong>
+                    {report.doc_broken_links.map((d, i) => (
+                        <div key={i} style={{ fontSize: "0.85em", marginLeft: "12px" }}>
+                            {noteLink(d.doc)} <span style={dimStyle}>→ {d.target} (nota inexistente)</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+            {!(report.merge_candidates || []).length && !(report.stale_procedurals || []).length && !(report.cross_scope_similar || []).length && !(report.docs_citing_dead || []).length && !(report.doc_broken_links || []).length && (
+                <span style={dimStyle}>Nada pendente de decisão — sem duplicatas, sem PROC stale, docs íntegros.</span>
             )}
         </div>
     );

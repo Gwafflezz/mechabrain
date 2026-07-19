@@ -68,6 +68,7 @@ from .generate import (
     render_initial_index,
     write_agents_md,
     write_default_config,
+    write_mecha_scribe_skill,
     write_schema,
 )
 from .index.indexer import Indexer, IndexReport
@@ -284,6 +285,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
     write_schema(paths, manifest)
     write_agents_md(paths, manifest)
+    skill_file = write_mecha_scribe_skill(paths)
 
     index_created = _write_if_absent(paths.index_file, render_initial_index(manifest))
     hot_created = _write_if_absent(paths.hot_file, render_initial_hot(manifest))
@@ -303,6 +305,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
                 "index_created": index_created,
                 "hot_created": hot_created,
                 "gitignore_added": gitignore_added,
+                "scribe_skill": paths.relative(skill_file),
             }
         )
     else:
@@ -371,6 +374,7 @@ def _print_init_human(
     _out(f"mechabrain: initialized vault at {paths.root}")
     _out(f"  manifest:  {paths.relative(paths.config_file)}" + (" (kept existing)" if config_kept else " (written)"))
     _out("  generated: AGENTS.md, _meta/schema.md, index.md, hot.md")
+    _out("  skill:     .claude/skills/mecha-scribe/SKILL.md (escriba -- documentar na vault)")
     _out(f"  agents:    {agents}")
     _out(
         "  gitignore: added " + repr(GITIGNORE_INDEX_ENTRY)
@@ -437,6 +441,7 @@ def _cmd_sync(args: argparse.Namespace) -> int:
 
     write_agents_md(paths, manifest)
     write_schema(paths, manifest)
+    write_mecha_scribe_skill(paths)
 
     created: list[str] = []
     for agent_id in manifest.agent_ids():
@@ -636,6 +641,10 @@ def _render_consolidation_report(report: Any) -> str:
     lines.append(
         f"  stale procedurals (retest suggested): {counts.get('stale_procedurals', 0)}"
     )
+    lines.append(
+        f"  docs citing dead memories: {counts.get('docs_citing_dead', 0)}, "
+        f"docs with broken links: {counts.get('doc_broken_links', 0)}"
+    )
     lines.append(f"  chunks indexed: {counts.get('chunks_indexed', 0)}")
     if report.committed:
         lines.append(f"  committed: {report.commit}")
@@ -660,6 +669,15 @@ def _render_consolidation_report(report: Any) -> str:
                 f"    - [[{stale.note_id}]]  ({tested}, {stale.days_stale} days, "
                 f"scope {stale.scope})"
             )
+    if report.docs_citing_dead:
+        lines.append("  update these docs -- they cite dead memories (propose the edit):")
+        for cite in report.docs_citing_dead:
+            arrow = f" -> [[{cite.successor}]]" if cite.successor else ""
+            lines.append(f"    - [[{cite.doc}]] cites [[{cite.cited}]] ({cite.status}{arrow})")
+    if report.doc_broken_links:
+        lines.append("  these docs have broken wikilinks (target missing):")
+        for link in report.doc_broken_links:
+            lines.append(f"    - [[{link.doc}]] -> [[{link.target}]] (no such note)")
     return "\n".join(lines)
 
 

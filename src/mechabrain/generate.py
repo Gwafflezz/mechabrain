@@ -78,6 +78,8 @@ __all__ = [
     "write_default_config",
     "write_schema",
     "write_agents_md",
+    "render_mecha_scribe_skill",
+    "write_mecha_scribe_skill",
     "write_index",
     "write_hot",
     "SHARD_LINE_THRESHOLD",
@@ -103,6 +105,9 @@ INDEX_TYPES: Final[tuple[MemoryType, ...]] = (MemoryType.SEMANTIC, MemoryType.PR
 _HIDDEN_STATUSES: Final[frozenset[str]] = frozenset({STATUS_ARCHIVED, STATUS_DEPRECATED})
 
 _TEMPLATE_DIR: Final[str] = "templates"
+#: The Mecha-Scribe skill, shipped verbatim (vault-agnostic) and deployed by
+#: `init` so a clean install carries the escriba (spec §11, Classe B).
+MECHA_SCRIBE_SKILL_TEMPLATE: Final[str] = "mecha-scribe-skill.md"
 _NONE: Final[str] = "_(nenhuma)_"
 _EMPTY_INDEX: Final[str] = "_Nenhuma memória ativa ainda._"
 _EMPTY_HOT: Final[str] = (
@@ -916,6 +921,34 @@ def write_agents_md(paths: VaultPaths, manifest: Manifest) -> Path:
         else None
     )
     return write_atomic(paths.agents_file, render_agents_md(manifest, existing))
+
+
+def render_mecha_scribe_skill() -> str:
+    """The Mecha-Scribe skill (``SKILL.md``), verbatim from the packaged template.
+
+    Vault-agnostic content -- no manifest substitution -- so a clean install
+    carries the same escriba to any vault. Read raw (not through
+    :class:`string.Template`) so a literal ``$`` in an example is safe.
+    """
+    return (
+        files(__package__)
+        .joinpath(_TEMPLATE_DIR, MECHA_SCRIBE_SKILL_TEMPLATE)
+        .read_text(encoding="utf-8")
+    )
+
+
+def write_mecha_scribe_skill(paths: VaultPaths) -> Path:
+    """Deploy the Mecha-Scribe Claude Code skill into the vault.
+
+    Writes ``<vault>/.claude/skills/mecha-scribe/SKILL.md`` -- a git-carried,
+    reproducible deployment artifact so that a clean install (``mechabrain
+    init``) or a vault clone carries the escriba with it, and Claude Code
+    discovers it as a project skill when working in the vault. The retrievable
+    contract lives in the brain as a ``PROC``; this is its executable routine.
+    Always regenerated: derived from the kernel, like ``AGENTS.md``/``schema.md``.
+    """
+    target = paths.root / ".claude" / "skills" / "mecha-scribe" / "SKILL.md"
+    return write_atomic(target, render_mecha_scribe_skill())
 
 
 def write_hot(

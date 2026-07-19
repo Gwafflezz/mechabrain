@@ -83,7 +83,9 @@ from .errors import MechabrainError, NoteNotFound
 from .gate import GateIssue, NearDuplicate
 from .graph import DEFAULT_RELATION, LinkGraph
 from .index.indexer import Indexer
+from .index.store import INDEX_LOCK_FILE
 from .index.store import from_manifest as store_from_manifest
+from .locking import FileLock
 from .manifest import Manifest, load_manifest
 from .note import Note, iter_notes, note_id_for, wikilink_for
 from .search import Retriever
@@ -152,8 +154,9 @@ class MemoryService:
     Construct it once per daemon. It owns the read snapshots a daemon must keep
     warm (R7.4) -- the authored :class:`~mechabrain.graph.LinkGraph` and a
     :class:`~mechabrain.search.Retriever` over it -- and the incremental
-    :class:`~mechabrain.index.indexer.Indexer`. Each write reindexes and drops
-    the snapshots so the next read sees the new bytes.
+    :class:`~mechabrain.index.indexer.Indexer`. Each write indexes just the note
+    it wrote (and any it archived) via ``index_note`` and drops the snapshots so
+    the next read sees the new bytes -- never a whole-corpus re-embed.
 
     Every method is safe to call from :func:`build_server`'s tools directly; the
     tools add only the JSON-error translation. Methods raise
@@ -171,12 +174,17 @@ class MemoryService:
             registry and weight consulted here (P6).
     """
 
-    __slots__ = ("paths", "manifest", "_indexer", "_lock", "_graph", "_retriever")
+    __slots__ = ("paths", "manifest", "_indexer", "_index_lock", "_lock", "_graph", "_retriever")
 
     def __init__(self, paths: VaultPaths, manifest: Manifest) -> None:
         self.paths = paths
         self.manifest = manifest
-        self._indexer = Indexer(paths, manifest)
+        # One FileLock instance shared with the indexer so a write can hold it
+        # and the surgical index_note nested inside re-enters reentrantly instead
+        # of deadlocking (FileLock is reentrant within an instance) -- the same
+        # pattern consolidate uses for its cycle.
+        self._index_lock = FileLock(paths.index_dir / INDEX_LOCK_FILE, purpose="memory_write")
+        self._indexer = Indexer(paths, manifest, lock=self._index_lock)
         self._lock = threading.RLock()
         self._graph: LinkGraph | None = None
         self._retriever: Retriever | None = None
@@ -316,12 +324,15 @@ class MemoryService:
         first (the dedup search is this service's own retriever, scoped and typed
         as §8.2 item 2 requires) and writes nothing if it rejects. On approval it
         resolves the filename from the manifest, writes the note atomically
-        (R7.5), archives whatever it supersedes (P8), and then this method
-        reindexes so the note is immediately searchable.
+        (R7.5), archives whatever it supersedes (P8), and indexes the new note
+        (and any it archived) incrementally via ``index_note`` -- immediately
+        searchable, with no re-embed of the unchanged corpus (§7.2 step 8).
 
-        The write itself holds the index lock; the reindex runs after it releases,
-        picking up the new note and any note the supersede archived. Both are done
-        before the snapshots are dropped, so no concurrent read sees a half-state.
+        The gate, the write and the incremental index all run under one held
+        index lock: this service and its indexer share a single ``FileLock``
+        instance, so the ``index_note`` nested in the write re-enters it
+        reentrantly. The snapshots are dropped after, so no concurrent read sees
+        a half-state.
 
         Args:
             type: Target memory type: ``episodic``, ``semantic``, ``procedural``
@@ -342,7 +353,13 @@ class MemoryService:
             ValueError: ``type`` is not a memory type.
             MechabrainError: the embedding backend or index is unavailable.
         """
-        with self._lock:
+        with self._lock, self._index_lock:
+            # Surgical, not whole-vault: we hold the shared index lock and pass
+            # the indexer to the writer, so the write's incremental hook indexes
+            # exactly the new note (and any note a supersede archived) via
+            # index_note -- no re-embed of the unchanged corpus (§7.2 step 8).
+            # lock=False because we already hold the one lock instance the
+            # nested index_note re-enters.
             result = writer_write(
                 type,
                 content,
@@ -350,8 +367,8 @@ class MemoryService:
                 self.manifest,
                 self.paths,
                 search_fn=self._dedup_search_fn(),
-                indexer=None,
-                lock=True,
+                indexer=self._indexer,
+                lock=False,
             )
             if result.rejected:
                 # Observability (v0.2.1): a rejection exists nowhere else --
@@ -371,7 +388,6 @@ class MemoryService:
                     "near_duplicates": [_near_duplicate(nd) for nd in result.near_duplicates],
                     "warnings": [_issue(issue) for issue in result.warnings],
                 }
-            self._indexer.reindex()
             self._drop_snapshots()
             ActionLog.for_vault(self.paths).record(
                 "write_accepted",
