@@ -374,7 +374,7 @@ def test_no_auth_header_without_a_key(transport: Any) -> None:
 
 def test_http_restores_the_order_the_caller_asked_for(transport: Any) -> None:
     """The OpenAI contract permits any order; arrival order would mislabel chunks."""
-    fake = transport(openai_response([[1.0, 0.0], [0.0, 1.0]], shuffle=True))
+    transport(openai_response([[1.0, 0.0], [0.0, 1.0]], shuffle=True))
     vectors = HttpProvider("some-model", endpoint=ENDPOINT).embed_texts(["first", "second"])
 
     assert np.allclose(vectors[0], [1.0, 0.0])

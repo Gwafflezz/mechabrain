@@ -223,6 +223,23 @@ def test_init_is_idempotent_and_preserves_edits(
     assert "already present" in capsys.readouterr().out  # gitignore not re-added
 
 
+def test_init_does_not_resurrect_a_disabled_research_folder(tmp_path: Path) -> None:
+    """Research/ is the one switchable §3 folder; a re-run honours the manifest."""
+    root = tmp_path / "vault"
+    assert main(["init", str(root)]) == 0
+    paths = VaultPaths.for_root(root)
+
+    config_text = paths.config_file.read_text(encoding="utf-8").replace(
+        "research_enabled: true", "research_enabled: false"
+    )
+    assert "research_enabled: false" in config_text  # the default config carries the key
+    paths.config_file.write_text(config_text, encoding="utf-8")
+    paths.research_dir.rmdir()
+
+    assert main(["init", str(root)]) == 0
+    assert not paths.research_dir.exists()
+
+
 def test_init_reports_invalid_manifest(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     root = tmp_path / "vault"
     assert main(["init", str(root)]) == 0

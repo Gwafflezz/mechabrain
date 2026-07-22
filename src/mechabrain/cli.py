@@ -276,12 +276,18 @@ def _cmd_init(args: argparse.Namespace) -> int:
     """
     paths = VaultPaths.for_root(_init_root(args))
 
+    # Research/ is the one switchable folder (§3, zones.research_enabled), so it
+    # waits for the manifest: a re-run must not resurrect a folder the
+    # deployment disabled. Everything else is unconditional contract.
     for directory in paths.contract_dirs():
-        directory.mkdir(parents=True, exist_ok=True)
+        if directory != paths.research_dir:
+            directory.mkdir(parents=True, exist_ok=True)
 
     config_kept = paths.config_file.is_file()
     write_default_config(paths)
     manifest = load_manifest(paths.config_file)
+    if manifest.zones.research_enabled:
+        paths.research_dir.mkdir(parents=True, exist_ok=True)
 
     write_schema(paths, manifest)
     write_agents_md(paths, manifest)

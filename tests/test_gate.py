@@ -373,6 +373,29 @@ def test_a_denied_tag_is_caught_through_its_hash_prefix(
     assert checks(gate(meta={**meta, "tags": ["#forbidden/tag"]})) == {"denylist_tags"}
 
 
+def test_confidence_outside_the_enum_is_rejected(
+    gate: Callable[..., GateResult], meta: dict[str, Any]
+) -> None:
+    """§6 -- `confidence: high|medium|low` is a closed enum, not a free label."""
+    result = gate(meta={**meta, "confidence": "certainly"})
+    assert checks(result) == {"confidence_invalid"}
+    assert "medium" in (result.rejections[0].hint or ""), "the hint lists the legal levels"
+
+
+def test_confidence_is_optional(gate: Callable[..., GateResult], meta: dict[str, Any]) -> None:
+    """Absent is fine: the writer stamps the honest `medium` default."""
+    without = {k: v for k, v in meta.items() if k != "confidence"}
+    assert gate(meta=without).approved
+
+
+def test_an_episodic_note_faces_the_confidence_enum_too(
+    gate: Callable[..., GateResult], meta: dict[str, Any]
+) -> None:
+    """§6 binds every note the kernel writes, whatever its type."""
+    result = gate("episodic", meta={**meta, "confidence": "certainly"})
+    assert checks(result) == {"confidence_invalid"}
+
+
 def test_procedural_without_evidence_is_rejected(
     gate: Callable[..., GateResult], meta: dict[str, Any]
 ) -> None:

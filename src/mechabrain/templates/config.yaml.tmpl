@@ -107,7 +107,9 @@ retrieval:
                                # tags + caminho de headings) — nunca extraído por LLM:
                                # em corpus autorado e atômico isso só adiciona custo
                                # e ruído (§7.1, §13).
-  rerank: false
+  rerank: false                # reservado pela spec; este kernel ainda não traz um
+                               # reranker, então `true` é recusado com erro claro (R5.1) —
+                               # aceitar a flag sem honrá-la seria default silencioso.
   link_expansion:              # expansão "graph-lite" pelo grafo AUTORADO (§7.1):
     default_hops: 1            # wikilinks do corpo + supersedes + arestas de
     max_hops: 2                # memory_link. 0 desliga. O grafo melhora por

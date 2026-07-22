@@ -25,6 +25,7 @@ Check                              Why it is mechanical
 §8.2 item 7 -- clean?               set intersection with the denylists
 R6.2 -- known author                membership in the manifest registry
 R6.6 -- known profile               membership in the author's profile list
+§6 -- confidence level              membership in the schema's `high|medium|low`
 §3 -- type enabled                  `zones.research_enabled`
 =================================  ===========================================
 
@@ -65,8 +66,9 @@ asked for evidence and never warned about atomicity. `Research/` is likewise
 outside §8.2, and a report is non-atomic by construction.
 
 Both still face the §6 *schema* invariants -- denylists (R6.1), a known author
-(R6.2), a known profile (R6.6) and a valid scope (R6.5). Those are not gate
-items: they hold for every note the kernel writes, whatever its type. A note
+(R6.2), a known profile (R6.6), a valid scope (R6.5) and a `confidence:` from
+the schema's enum. Those are not gate items: they hold for every note the
+kernel writes, whatever its type. A note
 with an unknown `agent:` is a broken registry reference, not a curation call.
 
 Dependency direction
@@ -91,7 +93,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
-from .contract import MemoryType
+from .contract import CONFIDENCE_LEVELS, MemoryType
 from .errors import GateRejected
 from .manifest import Manifest
 from .note import normalize_tags, note_id_for
@@ -331,6 +333,7 @@ def evaluate(
     if _check_agent(meta, manifest, rejections):
         _check_profile(meta, manifest, rejections)
     _check_denylists(meta, manifest, rejections)
+    _check_confidence(meta, rejections)
 
     if memory_type in FULL_GATE_TYPES:
         _check_source(meta, rejections)
@@ -492,6 +495,27 @@ def _check_denylists(
                 hint=f"drop the tag(s); {config} reserves them for the host vault",
             )
         )
+
+
+def _check_confidence(meta: Mapping[str, Any], rejections: list[GateIssue]) -> None:
+    """§6 -- `confidence:`, when present, is one of the schema's levels.
+
+    Absent is fine (the writer defaults to `medium`); an arbitrary string is
+    not: `min_confidence` filters and the §8.2 item 4b check both compare
+    against the closed `high|medium|low` enum, so an off-enum value would be a
+    memory the retrieval layer cannot rank.
+    """
+    confidence = _text(meta.get("confidence"))
+    if not confidence or confidence in CONFIDENCE_LEVELS:
+        return
+    rejections.append(
+        GateIssue(
+            check="confidence_invalid",
+            rule="§6",
+            message=f"confidence {confidence!r} is not a valid level",
+            hint=f"valid levels are: {', '.join(CONFIDENCE_LEVELS)}",
+        )
+    )
 
 
 def _check_source(meta: Mapping[str, Any], rejections: list[GateIssue]) -> None:

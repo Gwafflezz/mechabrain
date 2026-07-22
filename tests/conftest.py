@@ -190,7 +190,9 @@ def manifest_data_full() -> dict[str, Any]:
             "embedding": {"provider": "http", "model": "custom-model"},
             "hybrid": {"vector_weight": 0.75, "bm25_weight": 0.25},
             "contextual_retrieval": False,
-            "rerank": True,
+            # `rerank` is the one key that cannot be non-default here: `true` is
+            # rejected until a reranker ships (see the dedicated manifest test).
+            "rerank": False,
             "link_expansion": {"default_hops": 2, "max_hops": 3},
             "store": "lancedb",
         },

@@ -489,7 +489,7 @@ def test_stale_falls_back_to_created_when_never_tested(
 ) -> None:
     """A note predating `last_tested:` is aged by `created:` -- reading is not testing."""
     paths, manifest = _vault(make_vault, manifest_data_ci, proc_stale_days=180)
-    note = _proc(
+    _proc(
         write_note,
         paths.procedural_dir / "PROC_pre_field.md",
         "proj-a",

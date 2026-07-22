@@ -70,7 +70,6 @@ def test_full_manifest_reads_every_key_rather_than_defaulting(manifest_full: Man
     assert manifest_full.retrieval.embedding.model == "custom-model"
     assert manifest_full.retrieval.hybrid.vector_weight == 0.75
     assert manifest_full.retrieval.contextual_retrieval is False
-    assert manifest_full.retrieval.rerank is True
     assert manifest_full.retrieval.link_expansion.max_hops == 3
     assert manifest_full.retrieval.store == "lancedb"
     assert manifest_full.maintenance.decay_days == 30
@@ -324,6 +323,16 @@ def test_string_where_boolean_expected_is_rejected(manifest_data_ci: dict[str, A
     error = expect_error(manifest_data_ci)
     assert "retrieval.rerank" in error.message
     assert "boolean" in error.message
+
+
+def test_rerank_true_is_refused_until_a_reranker_exists(
+    manifest_data_ci: dict[str, Any],
+) -> None:
+    """A valid-looking flag no code honours is a silent default in disguise (R5.1)."""
+    manifest_data_ci["retrieval"]["rerank"] = True
+    error = expect_error(manifest_data_ci)
+    assert "retrieval.rerank" in error.message
+    assert "not implemented" in error.message
 
 
 def test_scalar_where_list_expected_is_rejected(manifest_data_ci: dict[str, Any]) -> None:

@@ -835,6 +835,14 @@ class RetrievalSpec:
             ),
             path,
         )
+        rerank = _get_bool(data, "rerank", path, default=False)
+        if rerank:
+            raise _fail(
+                _join(path, "rerank"),
+                "rerank: true is not implemented by this kernel",
+                "no reranker ships yet; leave rerank: false -- accepting the "
+                "flag without honouring it would be a silent default (R5.1)",
+            )
         store = _get_str(data, "store", path, default="numpy")
         if store not in VECTOR_STORES:
             near = difflib.get_close_matches(store, sorted(VECTOR_STORES), n=1)
@@ -851,7 +859,7 @@ class RetrievalSpec:
             ),
             hybrid=HybridSpec._parse(_section(data, "hybrid", path), _join(path, "hybrid")),
             contextual_retrieval=_get_bool(data, "contextual_retrieval", path, default=True),
-            rerank=_get_bool(data, "rerank", path, default=False),
+            rerank=rerank,
             link_expansion=LinkExpansionSpec._parse(
                 _section(data, "link_expansion", path), _join(path, "link_expansion")
             ),
