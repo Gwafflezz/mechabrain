@@ -18,6 +18,14 @@ Ele é composto de duas partes:
 que é preciso para portar o sistema. Se um passo de instalação exigir editar código, o projeto
 falhou.
 
+**Documentação:**
+
+- [Guia de setup](docs/SETUP.md) — passo a passo do zero: instalar, inicializar, configurar,
+  servir, agendar manutenção.
+- [Spec](docs/SPEC.md) — o contrato normativo completo (princípios, manifest, gate, MCP,
+  consolidação), na sua casa canônica.
+- [CLAUDE.md](CLAUDE.md) — governança para agentes que trabalham **neste repositório**.
+
 ---
 
 ## Instalação
@@ -39,6 +47,9 @@ mechabrain init .
 O `init` cria o esqueleto, escreve um `config.yaml` default, adiciona `mecha-brain/_meta/index/` ao
 `.gitignore` da vault, gera o `AGENTS.md` e o `schema.md`, e imprime o snippet de integração para as
 instruções da sua vault. É **idempotente**: rodar de novo não destrói nada.
+
+O caminho completo — configurar o manifest, subir o daemon, registrar os clientes MCP, agendar a
+consolidação, portar para outra máquina — está no [guia de setup](docs/SETUP.md).
 
 ---
 
@@ -121,10 +132,10 @@ pasta.
 | `memory_propose` | Propõe mudança em nota **fora** do sandbox. É a única via para isso.                |
 | `memory_link`    | Registra uma relação entre duas notas; alimenta a expansão por links da busca.      |
 
-> **Nomenclatura:** a spec descreve as ferramentas como `memory.search`, `memory.get` etc. O charset
-> de nome de tool do MCP não aceita ponto, então o nome real na wire usa underscore
-> (`memory_search`). A notação com ponto é o contrato conceitual; o underscore é o nome que você
-> configura no cliente.
+> **Nomenclatura:** a [spec](docs/SPEC.md#7-contrato-mcp) descreve as ferramentas como
+> `memory.search`, `memory.get` etc. O charset de nome de tool do MCP não aceita ponto, então o nome
+> real na wire usa underscore (`memory_search`). A notação com ponto é o contrato conceitual; o
+> underscore é o nome que você configura no cliente.
 
 Todo resultado de busca carrega `path` e `wikilink` da fonte, para o agente citar de onde tirou a
 informação. Memória citável é memória auditável.

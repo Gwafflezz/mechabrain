@@ -10,6 +10,9 @@ arquivo governa o trabalho sobre o código do kernel.
 - **O que é este repo:** o kernel, instalado **fora** da vault (via `uv tool`). Ele não
   contém nenhum caminho, nome de vault ou nome de agente de deployment — esses valores vêm
   sempre do manifest (`_meta/config.yaml`). Não codifique nada específico de deployment aqui.
+- **Fontes de verdade:** o contrato normativo é [docs/SPEC.md](docs/SPEC.md) (casa canônica
+  da spec); o passo a passo de operação é [docs/SETUP.md](docs/SETUP.md). Mudança de
+  comportamento do kernel que contradiga a spec exige emenda marcada nela, no mesmo commit.
 - **Idioma:** código, docstrings e mensagens de erro em inglês; README e docs de usuário em
   PT-BR.
 - **Dev:**
